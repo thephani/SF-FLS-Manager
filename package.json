@@ -1,0 +1,41 @@
+{
+  "name": "sf-fls-manager",
+  "displayName": "SF-FLS-MANAGER",
+  "description": "VS Code extension to manage Salesforce field-level security via a JSON config and bulk updates to profile XML.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-id",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:salesforce.openFlsConfigBuilder"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "salesforce.openFlsConfigBuilder",
+        "title": "Open FLS Commit Manager",
+        "category": "Salesforce"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "echo \"No lint configured\"",
+    "test": "echo \"No tests configured\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.4.0"
+  }
+}
