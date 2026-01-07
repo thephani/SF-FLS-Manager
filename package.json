@@ -1,11 +1,15 @@
 {
   "name": "sf-fls-manager",
   "displayName": "SF-FLS-MANAGER",
-  "description": "VS Code extension to manage Salesforce field-level security via a JSON config and bulk updates to profile XML.",
-  "version": "0.0.1",
-  "publisher": "your-publisher-id",
+  "description": "VS Code extension to review and apply Salesforce field-level security across profiles and permission sets using a shared JSON config.",
+  "version": "1.0.1",
+  "publisher": "thephani",
   "engines": {
     "vscode": "^1.85.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thephani/SF-FLS-Manager"
   },
   "categories": [
     "Other"
@@ -37,5 +41,6 @@
   },
   "dependencies": {
     "fast-xml-parser": "^4.4.0"
-  }
+  },
+  "icon": "images/icon.png"
 }

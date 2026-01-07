@@ -1,5 +1,16 @@
 ## SF-FLS-MANAGER
 
+## Quick start
+
+1. Open your Salesforce DX project in VS Code.
+2. Install / run the **SF-FLS-MANAGER** extension.
+3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run  
+   **Salesforce: Open FLS Commit Manager**.
+4. In **Step 1**, add the fields and access levels you care about.
+5. In **Step 2**, tick the profiles and permission sets you want to update.
+6. Click **Run FLS Commit**.
+7. Review the Git diff and commit when you’re happy.
+
 <img width="3320" height="1908" alt="image" src="https://github.com/user-attachments/assets/0ca15d66-5835-4372-8fb2-d084af9de3ca" />
 
 
@@ -22,19 +33,6 @@ The extension scans your workspace for:
 
 - Profiles: `**/force-app/main/default/profiles/**/*.profile-meta.xml`
 - Permission sets: `**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml`
-
----
-
-### Quick start
-
-1. Open your Salesforce DX project in VS Code.
-2. Install / run the **SF-FLS-MANAGER** extension.
-3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run  
-   **Salesforce: Open FLS Commit Manager**.
-4. In **Step 1**, add the fields and access levels you care about.
-5. In **Step 2**, tick the profiles and permission sets you want to update.
-6. Click **Run FLS Commit**.
-7. Review the Git diff and commit when you’re happy.
 
 ---
 
