@@ -1,5 +1,9 @@
 ## SF-FLS-MANAGER
 
+> Salesforce FLS Commit Manager is a VS Code extension that lets you review and update Field-Level Security (FLS) for many profiles and permission sets at once – without hand-editing XML.
+> 
+> It’s built for Salesforce devs and admins working with source-tracked projects (`force-app/...`) who want a clear, repeatable way to apply the same FLS rules across multiple targets.
+
 ## Quick start
 
 1. Open your Salesforce DX project in VS Code.
@@ -12,11 +16,6 @@
 7. Review the Git diff and commit when you’re happy.
 
 <img width="3320" height="1908" alt="image" src="https://github.com/user-attachments/assets/0ca15d66-5835-4372-8fb2-d084af9de3ca" />
-
-
-Salesforce FLS Commit Manager is a VS Code extension that lets you review and update Field-Level Security (FLS) for many profiles and permission sets at once – without hand-editing XML.
-
-It’s built for Salesforce devs and admins working with source-tracked projects (`force-app/...`) who want a clear, repeatable way to apply the same FLS rules across multiple targets.
 
 ---
 
