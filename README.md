@@ -27,11 +27,15 @@
   - Multiple **permission sets** (`*.permissionset-meta.xml`)
 - Simple “add/update vs remove” switch per field.
 - Clean, minimal diffs – files are only changed when something in FLS actually changes.
+- Explicit target selection – unchecked profiles and permission sets are skipped.
+- Workspace-scoped discovery – profiles and permission sets are read from the active project folder, with duplicate names collapsed in the picker.
 
 The extension scans your workspace for:
 
 - Profiles: `**/force-app/main/default/profiles/**/*.profile-meta.xml`
 - Permission sets: `**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml`
+
+In multi-root VS Code workspaces, the extension uses the first workspace folder as the active project.
 
 ---
 
@@ -68,6 +72,7 @@ Decide *where* the rules from Step 1 will run:
   - A **Name** column (taken from the file name, e.g.  
     `Sales Manager.profile-meta.xml` → `Sales Manager`).
 - All checkboxes start **unchecked** every time you open the manager, so you always make an explicit choice.
+- If no profiles or permission sets are checked, the run stops with a warning instead of updating every file.
 - As you change selections, the preview in Step 1 updates.
 
 When ready, click **Run FLS Commit**:
@@ -116,6 +121,11 @@ Build output is generated in `out/` and should not be committed.
   - Confirm you have at least one field in Step 1.
   - Confirm at least one profile or permission set is checked in Step 2.
   - Remember: if a field is marked Delete and it doesn’t exist in a file, that file won’t change.
+
+- **“I see duplicate profile or permission set names”**
+  - Restart the Extension Development Host after rebuilding.
+  - Check whether the same Salesforce project is open more than once in a multi-root workspace.
+  - The picker de-duplicates matching file names inside the active project folder.
 
 - **“I want to see what will change”**
   - Use Git (or your VCS) to review the diff after running **Run FLS Commit**.
