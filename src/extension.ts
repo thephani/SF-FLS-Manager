@@ -27,15 +27,21 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const profileFiles = await vscode.workspace.findFiles(
+      const profileFiles = await findWorkspaceFiles(
+        workspaceFolder,
         '**/force-app/main/default/profiles/**/*.profile-meta.xml'
       );
-      const availableProfiles = profileFiles.map((uri) => profileNameFromUri(uri));
+      const availableProfiles = uniqueSortedNames(
+        profileFiles.map((uri) => profileNameFromUri(uri))
+      );
 
-      const permsetFiles = await vscode.workspace.findFiles(
+      const permsetFiles = await findWorkspaceFiles(
+        workspaceFolder,
         '**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml'
       );
-      const availablePermissionSets = permsetFiles.map((uri) => permissionSetNameFromUri(uri));
+      const availablePermissionSets = uniqueSortedNames(
+        permsetFiles.map((uri) => permissionSetNameFromUri(uri))
+      );
 
       const panel = vscode.window.createWebviewPanel(
         'sfFlsConfigBuilder',
@@ -179,6 +185,17 @@ function getPrimaryWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
   return folders[0];
 }
 
+function findWorkspaceFiles(
+  workspaceFolder: vscode.WorkspaceFolder,
+  pattern: string
+): Thenable<vscode.Uri[]> {
+  return vscode.workspace.findFiles(new vscode.RelativePattern(workspaceFolder, pattern));
+}
+
+function uniqueSortedNames(names: string[]): string[] {
+  return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+}
+
 function profileNameFromUri(uri: vscode.Uri): string {
   const base = path.basename(uri.fsPath);
   return base.replace(/\.profile-meta\.xml$/i, '');
@@ -199,10 +216,12 @@ async function applyFlsToProfiles(
     return;
   }
 
-  const allProfileFiles = await vscode.workspace.findFiles(
+  const allProfileFiles = await findWorkspaceFiles(
+    workspaceFolder,
     '**/force-app/main/default/profiles/**/*.profile-meta.xml'
   );
-  const allPermsetFiles = await vscode.workspace.findFiles(
+  const allPermsetFiles = await findWorkspaceFiles(
+    workspaceFolder,
     '**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml'
   );
 
@@ -213,24 +232,24 @@ async function applyFlsToProfiles(
     return;
   }
 
-  let targetProfileFiles = allProfileFiles;
-  if (config.profiles && config.profiles.length > 0) {
-    const wanted = new Set(config.profiles);
-    const narrowed = allProfileFiles.filter((uri) => wanted.has(profileNameFromUri(uri)));
-    if (narrowed.length > 0) {
-      targetProfileFiles = narrowed;
-    }
-  }
+  const selectedProfiles = Array.isArray(config.profiles) ? config.profiles : [];
+  const selectedPermissionSets = Array.isArray(config.permissionSets) ? config.permissionSets : [];
 
-  let targetPermsetFiles = allPermsetFiles;
-  if (config.permissionSets && config.permissionSets.length > 0) {
-    const wantedPermsets = new Set(config.permissionSets);
-    const narrowedPermsets = allPermsetFiles.filter((uri) =>
-      wantedPermsets.has(permissionSetNameFromUri(uri))
+  const wantedProfiles = new Set(selectedProfiles);
+  const targetProfileFiles = allProfileFiles.filter((uri) =>
+    wantedProfiles.has(profileNameFromUri(uri))
+  );
+
+  const wantedPermsets = new Set(selectedPermissionSets);
+  const targetPermsetFiles = allPermsetFiles.filter((uri) =>
+    wantedPermsets.has(permissionSetNameFromUri(uri))
+  );
+
+  if (targetProfileFiles.length === 0 && targetPermsetFiles.length === 0) {
+    vscode.window.showWarningMessage(
+      'SF-FLS-MANAGER: No profiles or permission sets selected. Check at least one target before running.'
     );
-    if (narrowedPermsets.length > 0) {
-      targetPermsetFiles = narrowedPermsets;
-    }
+    return;
   }
 
   const parser = new XMLParser({
