@@ -4,6 +4,7 @@
   "description": "VS Code extension to review and apply Salesforce field-level security across profiles and permission sets using a shared JSON config.",
   "version": "0.1.1",
   "publisher": "thephani",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },

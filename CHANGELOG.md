@@ -9,7 +9,7 @@
 - De-duplicated profile and permission set names shown in the picker.
 - Update Icon.png
 
-## 0.0.1
+## 0.0.1 - 1/8/2026
 
 - Initial release of SF-FLS-MANAGER.
 - Added a VS Code webview for configuring field-level security changes.
