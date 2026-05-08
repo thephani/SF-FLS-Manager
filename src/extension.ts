@@ -75,6 +75,12 @@ export function activate(context: vscode.ExtensionContext) {
                 if (Array.isArray(obj.fields)) {
                   fields = obj.fields;
                 }
+                if (Array.isArray(obj.profiles)) {
+                  selectedProfiles = obj.profiles;
+                }
+                if (Array.isArray(obj.permissionSets)) {
+                  selectedPermissionSets = obj.permissionSets;
+                }
               }
 
               panel.webview.postMessage({
@@ -407,67 +413,186 @@ function getWebviewContent(): string {
   :root {
     --bg: var(--vscode-editor-background);
     --bg-elevated: var(--vscode-sideBar-background, var(--vscode-editor-background));
-    --bg-elevated-soft: var(--vscode-editor-background);
+    --bg-elevated-soft: var(--vscode-input-background, var(--vscode-editor-background));
+    --bg-hover: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.08));
+    --bg-active: var(--vscode-list-activeSelectionBackground, rgba(14, 99, 156, 0.22));
     --border-subtle: var(--vscode-panel-border, #3c3c3c);
+    --border-strong: var(--vscode-focusBorder, #007fd4);
     --text: var(--vscode-foreground);
     --text-muted: var(--vscode-descriptionForeground, #808080);
     --accent: var(--vscode-button-background, #0e639c);
-    --accent-soft: var(--vscode-button-secondaryBackground, rgba(14, 99, 156, 0.18));
+    --accent-soft: var(--vscode-badge-background, rgba(14, 99, 156, 0.18));
     --accent-strong: var(--vscode-button-hoverBackground, #007acc);
     --danger: var(--vscode-inputValidation-errorBorder, #c74e39);
+    --danger-bg: var(--vscode-inputValidation-errorBackground, rgba(199, 78, 57, 0.12));
+    --warning: var(--vscode-editorWarning-foreground, #cca700);
+  }
+
+  * {
+    box-sizing: border-box;
   }
 
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background-color: var(--bg);
     color: var(--text);
-    margin: 16px;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .app-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top-bar,
+  .command-bar {
+    position: sticky;
+    z-index: 5;
+    background-color: var(--bg);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .top-bar {
+    top: 0;
+    padding: 14px 18px 12px;
+  }
+
+  .command-bar {
+    top: 67px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 18px;
   }
 
   h1 {
-    margin-bottom: 4px;
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: 0;
   }
 
-  p.description {
+  .description {
     color: var(--text-muted);
-    margin-top: 0;
-    margin-bottom: 16px;
+    margin: 0;
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: minmax(360px, 2fr) minmax(520px, 3fr);
+    gap: 14px;
+    padding: 14px 18px 18px;
+  }
+
+  .panel {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background-color: var(--bg-elevated);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--bg-elevated-soft);
+  }
+
+  .panel-title {
+    margin: 0 0 3px;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .panel-body {
+    padding: 12px;
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .row-actions,
+  .summary-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .summary-strip {
+    min-width: 0;
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 4px;
   }
 
   th, td {
-    border: 1px solid var(--border-subtle);
-    padding: 4px 6px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 6px 8px;
     font-size: 12px;
+    vertical-align: middle;
   }
 
   th {
-    background: linear-gradient(
-      to bottom,
-      var(--bg-elevated-soft),
-      var(--bg-elevated)
-    );
+    background-color: var(--bg-elevated-soft);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-align: left;
   }
 
-  input[type="text"] {
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  input[type="text"],
+  input[type="search"] {
     width: 100%;
-    box-sizing: border-box;
-    background-color: var(--bg-elevated);
-    border: 1px solid #3f3f46;
+    background-color: var(--vscode-input-background, var(--bg-elevated));
+    border: 1px solid var(--vscode-input-border, var(--border-subtle));
     color: var(--text);
-    padding: 2px 4px;
+    padding: 5px 7px;
+    border-radius: 3px;
+    font: inherit;
+  }
+
+  input[type="text"]:focus,
+  input[type="search"]:focus {
+    outline: 1px solid var(--border-strong);
+    outline-offset: -1px;
+  }
+
+  input.invalid {
+    border-color: var(--danger);
+    background-color: var(--danger-bg);
   }
 
   button {
-    margin-right: 6px;
-    padding: 4px 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 10px;
     font-size: 12px;
-    border-radius: 4px;
+    border-radius: 3px;
     border: 1px solid var(--border-subtle);
     background-color: var(--vscode-button-secondaryBackground, var(--bg-elevated));
     color: var(--text);
@@ -485,84 +610,50 @@ function getWebviewContent(): string {
     transform: translateY(1px);
   }
 
-  .accordion-section {
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    margin-bottom: 8px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  }
-
-  .accordion-header {
-    width: 100%;
-    text-align: left;
-    background: linear-gradient(
-      to right,
-      var(--bg-elevated),
-      var(--bg-elevated-soft)
-    );
-    color: var(--text);
-    border: none;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .accordion-panel {
-    padding: 8px 10px;
-    display: block;
-    background-color: var(--bg-elevated-soft);
-  }
-
-  .section-title {
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-
-  .hint {
-    font-size: 11px;
-    color: var(--text-muted);
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
   }
 
   .search-input {
-    width: 100%;
-    box-sizing: border-box;
-    margin-bottom: 8px;
-    padding: 6px 8px;
-    background-color: var(--vscode-input-background, var(--bg-elevated));
-    border: 1px solid var(--vscode-input-border, var(--border-subtle));
-    color: var(--text);
-    font-size: 13px;
-    border-radius: 4px;
-  }
-
-  .tables-row {
-    display: flex;
-    gap: 12px;
-  }
-
-  .table-column {
-    flex: 1;
+    margin-bottom: 10px;
   }
 
   .checkbox-col {
-    width: 64px;
+    width: 72px;
     text-align: center;
   }
 
   .name-col {
-    width: 60%;
+    min-width: 220px;
+  }
+
+  .row-col {
+    width: 44px;
+    text-align: center;
   }
 
   .icon-button {
-    cursor: pointer;
+    min-width: 26px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    font-size: 14px;
+  }
+
+  .icon-heading {
+    display: inline-block;
+    font-size: 15px;
+    line-height: 1;
   }
 
   .table-wrapper {
-    max-height: 360px; /* ~15 rows */
+    max-height: 430px;
     overflow-y: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background-color: var(--bg);
   }
 
   .table-wrapper thead th {
@@ -571,12 +662,12 @@ function getWebviewContent(): string {
     z-index: 1;
   }
 
-  .table-wrapper tbody tr:nth-child(even) {
-    background-color: rgba(255, 255, 255, 0.01);
+  .table-wrapper tbody tr:hover {
+    background-color: var(--bg-hover);
   }
 
-  .table-wrapper tbody tr:hover {
-    background-color: rgba(255, 255, 255, 0.03);
+  .table-wrapper tbody tr.selected-row {
+    background-color: var(--bg-active);
   }
 
   .primary-button {
@@ -591,116 +682,221 @@ function getWebviewContent(): string {
     border-color: var(--accent-strong);
   }
 
+  .badge,
   .pill-label {
     display: inline-block;
-    padding: 1px 8px;
+    padding: 2px 8px;
     border-radius: 999px;
     background-color: var(--accent-soft);
-    color: var(--accent-strong);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    color: var(--vscode-badge-foreground, var(--text));
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .pill-label {
+    background-color: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    text-transform: none;
+  }
+
+  .target-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .target-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .target-title {
+    font-weight: 650;
+  }
+
+  .selected-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .selected-strip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 72px;
+    overflow-y: auto;
+  }
+
+  .selected-group {
+    min-width: 0;
+  }
+
+  .selected-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .empty-state {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .validation-message {
+    min-height: 18px;
+    color: var(--warning);
+    font-size: 12px;
+  }
+
+  .validation-message.error {
+    color: var(--danger);
+  }
+
+  @media (max-width: 920px) {
+    .workspace,
+    .target-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .command-bar {
+      top: 86px;
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 </style>
 </head>
 <body>
-<h1>Salesforce FLS Commit Manager</h1>
-<p class="description">Prepare and commit field-level security changes to your Salesforce metadata.</p>
+<div class="app-shell">
+  <header class="top-bar">
+    <h1>Salesforce FLS Commit Manager</h1>
+    <p class="description">Prepare field-level security changes for selected profiles and permission sets.</p>
+  </header>
 
-<div class="accordion-section">
-  <button class="accordion-header" data-target="fields-panel">
-    <span class="pill-label">Step 1</span>
-    &nbsp;Add / Remove Fields
-  </button>
-  <div class="accordion-panel" id="fields-panel">
-    <div class="tables-row">
-      <div class="table-column">
-        <p class="hint">Define which fields and access levels you want to apply.</p>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th class="checkbox-col">Row</th>
-                <th class="checkbox-col">Delete</th>
-                <th class="name-col">Field API Name</th>
-                <th class="checkbox-col">Readable</th>
-                <th class="checkbox-col">Editable</th>
-              </tr>
-            </thead>
-            <tbody id="field-rows"></tbody>
-          </table>
-        </div>
-        <p>
-          <button id="addRow">Add Field</button>
-        </p>
-      </div>
-      <div class="table-column">
-        <p class="section-title">Preview of Selections</p>
-        <p class="hint">Shows currently selected profiles and permission sets from Step 2.</p>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Profiles</th>
-                <th>Permission Sets</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td id="preview-profiles"></td>
-                <td id="preview-permsets"></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+  <div class="command-bar">
+    <div class="summary-strip" aria-live="polite">
+      <span id="fieldCountBadge" class="badge">0 fields</span>
+      <span id="targetCountBadge" class="badge">0 targets</span>
+      <span id="operationCountBadge" class="pill-label">0 operations</span>
+    </div>
+    <div class="row-actions">
+      <div id="validationMessage" class="validation-message"></div>
+      <button id="runApply" class="primary-button" disabled>Apply FLS Changes</button>
     </div>
   </div>
-</div>
 
-<div class="accordion-section">
-  <button class="accordion-header" data-target="profiles-panel">
-    <span class="pill-label">Step 2</span>
-    &nbsp;Select Profiles & Permission Sets
-  </button>
-  <div class="accordion-panel" id="profiles-panel">
-    <p class="hint">Select which profiles and permission sets should receive the configured field permissions.</p>
-    <input id="searchInput" class="search-input" type="text" placeholder="Search profiles and permission sets..." />
-    <p class="hint">Start typing to filter both lists by name.</p>
-    <p>
-      <button id="runApply" class="primary-button">Run FLS Commit</button>
-    </p>
-    <div class="tables-row">
-      <div class="table-column">
-        <div class="section-title">Profiles</div>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th class="checkbox-col"><input id="profilesCheckAll" type="checkbox" /></th>
-                <th class="name-col">Name</th>
-              </tr>
-            </thead>
-            <tbody id="profile-rows"></tbody>
-          </table>
+  <main class="workspace">
+    <div class="stack">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Selected Targets</h2>
+            <p class="hint">Review target selections while editing field rules.</p>
+          </div>
         </div>
-      </div>
-      <div class="table-column">
-        <div class="section-title">Permission Sets</div>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th class="checkbox-col"><input id="permsetsCheckAll" type="checkbox" /></th>
-                <th class="name-col">Name</th>
-              </tr>
-            </thead>
-            <tbody id="permset-rows"></tbody>
-          </table>
+        <div class="panel-body selected-strip">
+          <div class="selected-group">
+            <div class="target-header">
+              <span class="target-title">Selected Profiles</span>
+              <span id="fieldPanelSelectedProfilesBadge" class="pill-label">0 selected</span>
+            </div>
+            <div id="fieldPanelSelectedProfiles" class="selected-strip-list"></div>
+          </div>
+          <div class="selected-group">
+            <div class="target-header">
+              <span class="target-title">Selected Permission Sets</span>
+              <span id="fieldPanelSelectedPermsetsBadge" class="pill-label">0 selected</span>
+            </div>
+            <div id="fieldPanelSelectedPermsets" class="selected-strip-list"></div>
+          </div>
         </div>
-      </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Fields</h2>
+            <p class="hint">Define each field permission rule. EDIT automatically enables READ.</p>
+          </div>
+          <button id="addRow" type="button">Add Field</button>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th class="row-col"></th>
+                  <th class="checkbox-col">
+                    <span class="icon-heading" title="Remove field permission from selected targets" aria-label="Remove field permission from selected targets">&#128465;</span>
+                  </th>
+                  <th class="name-col">Field API Name</th>
+                  <th class="checkbox-col">READ</th>
+                  <th class="checkbox-col">EDIT</th>
+                </tr>
+              </thead>
+              <tbody id="field-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
-  </div>
+
+    <aside class="stack">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Targets</h2>
+            <p class="hint">Choose exactly where the configured rules should be applied.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <input id="searchInput" class="search-input" type="search" placeholder="Search profiles and permission sets" />
+          <div class="target-grid">
+            <div>
+              <div class="target-header">
+                <span class="target-title">Profiles</span>
+                <span id="profileVisibleBadge" class="pill-label">0 found</span>
+              </div>
+              <div class="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="checkbox-col"><input id="profilesCheckAll" type="checkbox" title="Select all visible profiles" /></th>
+                      <th class="name-col">Name</th>
+                    </tr>
+                  </thead>
+                  <tbody id="profile-rows"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <div class="target-header">
+                <span class="target-title">Permission Sets</span>
+                <span id="permsetVisibleBadge" class="pill-label">0 found</span>
+              </div>
+              <div class="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="checkbox-col"><input id="permsetsCheckAll" type="checkbox" title="Select all visible permission sets" /></th>
+                      <th class="name-col">Name</th>
+                    </tr>
+                  </thead>
+                  <tbody id="permset-rows"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
 </div>
 
 <script nonce="${nonce}">
@@ -709,13 +905,21 @@ function getWebviewContent(): string {
   const fieldRowsEl = document.getElementById('field-rows');
   const profileRowsEl = document.getElementById('profile-rows');
   const permsetRowsEl = document.getElementById('permset-rows');
-  const previewProfilesEl = document.getElementById('preview-profiles');
-  const previewPermsetsEl = document.getElementById('preview-permsets');
+  const fieldPanelSelectedProfilesEl = document.getElementById('fieldPanelSelectedProfiles');
+  const fieldPanelSelectedPermsetsEl = document.getElementById('fieldPanelSelectedPermsets');
   const searchInput = document.getElementById('searchInput');
   const profilesCheckAll = document.getElementById('profilesCheckAll');
   const permsetsCheckAll = document.getElementById('permsetsCheckAll');
   const runApplyBtn = document.getElementById('runApply');
   const addRowBtn = document.getElementById('addRow');
+  const fieldCountBadge = document.getElementById('fieldCountBadge');
+  const targetCountBadge = document.getElementById('targetCountBadge');
+  const operationCountBadge = document.getElementById('operationCountBadge');
+  const fieldPanelSelectedProfilesBadge = document.getElementById('fieldPanelSelectedProfilesBadge');
+  const fieldPanelSelectedPermsetsBadge = document.getElementById('fieldPanelSelectedPermsetsBadge');
+  const profileVisibleBadge = document.getElementById('profileVisibleBadge');
+  const permsetVisibleBadge = document.getElementById('permsetVisibleBadge');
+  const validationMessage = document.getElementById('validationMessage');
 
   let availableProfiles = [];
   let availablePermissionSets = [];
@@ -724,18 +928,20 @@ function getWebviewContent(): string {
     const tr = document.createElement('tr');
 
     const delTd = document.createElement('td');
-    delTd.className = 'checkbox-col';
+    delTd.className = 'row-col';
     const delButton = document.createElement('button');
     delButton.type = 'button';
-    delButton.textContent = '🗑';
+    delButton.textContent = '×';
     delButton.title = 'Delete row';
+    delButton.setAttribute('aria-label', 'Delete row');
     delButton.className = 'icon-button';
-    delButton.style.padding = '2px 6px';
     delButton.addEventListener('click', () => {
       fieldRowsEl.removeChild(tr);
       if (!fieldRowsEl.children.length) {
         createFieldRow({ field: '', readable: false, editable: false });
       }
+      renumberFieldRows();
+      refreshState();
     });
     delTd.appendChild(delButton);
     tr.appendChild(delTd);
@@ -745,6 +951,7 @@ function getWebviewContent(): string {
     const deleteFlagCheckbox = document.createElement('input');
     deleteFlagCheckbox.type = 'checkbox';
     deleteFlagCheckbox.checked = !!entry.remove;
+    deleteFlagCheckbox.title = 'Remove this field permission from selected targets';
     deleteFlagTd.appendChild(deleteFlagCheckbox);
     tr.appendChild(deleteFlagTd);
 
@@ -754,6 +961,7 @@ function getWebviewContent(): string {
     fieldInput.type = 'text';
     fieldInput.value = entry.field || '';
     fieldInput.placeholder = 'e.g. Account.Name__c';
+    fieldInput.spellcheck = false;
     fieldTd.appendChild(fieldInput);
     tr.appendChild(fieldTd);
 
@@ -762,6 +970,7 @@ function getWebviewContent(): string {
     const readableInput = document.createElement('input');
     readableInput.type = 'checkbox';
     readableInput.checked = !!entry.readable;
+    readableInput.title = 'Grant read access';
     readableTd.appendChild(readableInput);
     tr.appendChild(readableTd);
 
@@ -770,6 +979,7 @@ function getWebviewContent(): string {
     const editableInput = document.createElement('input');
     editableInput.type = 'checkbox';
     editableInput.checked = !!entry.editable;
+    editableInput.title = 'Grant edit access';
     editableTd.appendChild(editableInput);
     tr.appendChild(editableTd);
 
@@ -777,9 +987,21 @@ function getWebviewContent(): string {
       if (editableInput.checked) {
         readableInput.checked = true;
       }
+      refreshState();
     });
 
+    readableInput.addEventListener('change', () => {
+      if (!readableInput.checked && editableInput.checked) {
+        editableInput.checked = false;
+      }
+      refreshState();
+    });
+    deleteFlagCheckbox.addEventListener('change', refreshState);
+    fieldInput.addEventListener('input', refreshState);
+
     fieldRowsEl.appendChild(tr);
+    renumberFieldRows();
+    refreshState();
   }
 
   function renderFieldRows(fields) {
@@ -818,6 +1040,7 @@ function getWebviewContent(): string {
       const includeCheckbox = document.createElement('input');
       includeCheckbox.type = 'checkbox';
       includeCheckbox.checked = selectedSet.has(profilePath);
+      tr.classList.toggle('selected-row', includeCheckbox.checked);
       includeTd.appendChild(includeCheckbox);
       tr.appendChild(includeTd);
 
@@ -856,6 +1079,7 @@ function getWebviewContent(): string {
       const includeCheckbox = document.createElement('input');
       includeCheckbox.type = 'checkbox';
       includeCheckbox.checked = selectedSet.has(permsetName);
+      tr.classList.toggle('selected-row', includeCheckbox.checked);
       includeTd.appendChild(includeCheckbox);
       tr.appendChild(includeTd);
 
@@ -868,6 +1092,16 @@ function getWebviewContent(): string {
 
       permsetRowsEl.appendChild(tr);
     }
+  }
+
+  function renumberFieldRows() {
+    Array.from(fieldRowsEl.children).forEach((tr, index) => {
+      const button = tr.querySelector('button');
+      if (button) {
+        button.title = 'Delete row ' + (index + 1);
+        button.setAttribute('aria-label', 'Delete row ' + (index + 1));
+      }
+    });
   }
 
   function collectFieldData() {
@@ -915,33 +1149,146 @@ function getWebviewContent(): string {
   }
 
   function renderPreviewLists(profiles, permsets) {
-    if (previewProfilesEl) {
-      previewProfilesEl.innerHTML = '';
+    if (fieldPanelSelectedProfilesEl) {
+      fieldPanelSelectedProfilesEl.innerHTML = '';
       if (profiles.length) {
         for (const name of profiles) {
-          const div = document.createElement('div');
-          div.textContent = name;
-          previewProfilesEl.appendChild(div);
+          const span = document.createElement('span');
+          span.className = 'badge selected-chip';
+          span.title = name;
+          span.textContent = name;
+          fieldPanelSelectedProfilesEl.appendChild(span);
         }
+      } else {
+        const span = document.createElement('span');
+        span.className = 'empty-state';
+        span.textContent = 'No profiles selected.';
+        fieldPanelSelectedProfilesEl.appendChild(span);
       }
     }
 
-    if (previewPermsetsEl) {
-      previewPermsetsEl.innerHTML = '';
+    if (fieldPanelSelectedPermsetsEl) {
+      fieldPanelSelectedPermsetsEl.innerHTML = '';
       if (permsets.length) {
         for (const name of permsets) {
-          const div = document.createElement('div');
-          div.textContent = name;
-          previewPermsetsEl.appendChild(div);
+          const span = document.createElement('span');
+          span.className = 'badge selected-chip';
+          span.title = name;
+          span.textContent = name;
+          fieldPanelSelectedPermsetsEl.appendChild(span);
         }
+      } else {
+        const span = document.createElement('span');
+        span.className = 'empty-state';
+        span.textContent = 'No permission sets selected.';
+        fieldPanelSelectedPermsetsEl.appendChild(span);
       }
     }
   }
 
-  function refreshPreview() {
+  function analyzeFields() {
+    const names = new Map();
+    let duplicateCount = 0;
+
+    for (const input of Array.from(fieldRowsEl.querySelectorAll('td:nth-child(3) input[type="text"]'))) {
+      const value = input.value.trim();
+      input.classList.remove('invalid');
+      if (!value) {
+        continue;
+      }
+
+      const key = value.toLowerCase();
+      const existing = names.get(key);
+      if (existing) {
+        input.classList.add('invalid');
+        existing.classList.add('invalid');
+        duplicateCount += 1;
+      } else {
+        names.set(key, input);
+      }
+    }
+
+    return {
+      fieldCount: collectFieldData().length,
+      duplicateCount
+    };
+  }
+
+  function visibleNamedRowCount(tbody, dataKey) {
+    return Array.from(tbody.children).filter((tr) => {
+      return !!tr.dataset[dataKey] && tr.style.display !== 'none';
+    }).length;
+  }
+
+  function syncCheckAllState(tbody, dataKey, checkbox) {
+    if (!checkbox) {
+      return;
+    }
+    const visibleRows = Array.from(tbody.children).filter((tr) => {
+      return !!tr.dataset[dataKey] && tr.style.display !== 'none';
+    });
+    const checkedRows = visibleRows.filter((tr) => {
+      const rowCheckbox = tr.querySelector('input[type="checkbox"]');
+      return rowCheckbox && rowCheckbox.checked;
+    });
+    checkbox.checked = visibleRows.length > 0 && checkedRows.length === visibleRows.length;
+    checkbox.indeterminate = checkedRows.length > 0 && checkedRows.length < visibleRows.length;
+  }
+
+  function refreshState() {
     const profiles = collectSelectedProfiles();
     const permsets = collectSelectedPermissionSets();
+    const fieldState = analyzeFields();
+    const targetCount = profiles.length + permsets.length;
+    const operationCount = fieldState.fieldCount * targetCount;
+
     renderPreviewLists(profiles, permsets);
+
+    if (fieldCountBadge) {
+      fieldCountBadge.textContent = fieldState.fieldCount + (fieldState.fieldCount === 1 ? ' field' : ' fields');
+    }
+    if (targetCountBadge) {
+      targetCountBadge.textContent = targetCount + (targetCount === 1 ? ' target' : ' targets');
+    }
+    if (operationCountBadge) {
+      operationCountBadge.textContent = operationCount + (operationCount === 1 ? ' operation' : ' operations');
+    }
+    if (fieldPanelSelectedProfilesBadge) {
+      fieldPanelSelectedProfilesBadge.textContent = profiles.length + ' selected';
+    }
+    if (fieldPanelSelectedPermsetsBadge) {
+      fieldPanelSelectedPermsetsBadge.textContent = permsets.length + ' selected';
+    }
+    if (profileVisibleBadge) {
+      const count = visibleNamedRowCount(profileRowsEl, 'profileName');
+      profileVisibleBadge.textContent = count + ' found';
+    }
+    if (permsetVisibleBadge) {
+      const count = visibleNamedRowCount(permsetRowsEl, 'permsetName');
+      permsetVisibleBadge.textContent = count + ' found';
+    }
+
+    syncCheckAllState(profileRowsEl, 'profileName', profilesCheckAll);
+    syncCheckAllState(permsetRowsEl, 'permsetName', permsetsCheckAll);
+
+    let message = '';
+    let isError = false;
+    if (fieldState.duplicateCount > 0) {
+      message = 'Duplicate field API names need to be removed.';
+      isError = true;
+    } else if (fieldState.fieldCount === 0) {
+      message = 'Add at least one field rule.';
+    } else if (targetCount === 0) {
+      message = 'Select at least one profile or permission set.';
+    }
+
+    if (validationMessage) {
+      validationMessage.textContent = message;
+      validationMessage.classList.toggle('error', isError);
+    }
+    if (runApplyBtn) {
+      runApplyBtn.disabled = fieldState.fieldCount === 0 || targetCount === 0 || fieldState.duplicateCount > 0;
+    }
   }
 
   addRowBtn.addEventListener('click', () => {
@@ -959,6 +1306,7 @@ function getWebviewContent(): string {
         data.selectedPermissionSets || []
       );
       applySearchFilter(searchInput ? searchInput.value || '' : '');
+      refreshState();
     }
   });
 
@@ -978,6 +1326,7 @@ function getWebviewContent(): string {
 
     filterRows(profileRowsEl, 'profileName');
     filterRows(permsetRowsEl, 'permsetName');
+    refreshState();
   }
 
   if (searchInput) {
@@ -989,12 +1338,13 @@ function getWebviewContent(): string {
   function setAllInTbody(tbody, dataKey, checked) {
     for (const tr of Array.from(tbody.children)) {
       const name = tr.dataset[dataKey];
-      if (!name) {
+      if (!name || tr.style.display === 'none') {
         continue;
       }
       const checkbox = tr.querySelector('input[type="checkbox"]');
       if (checkbox) {
         checkbox.checked = checked;
+        tr.classList.toggle('selected-row', checked);
       }
     }
   }
@@ -1002,14 +1352,14 @@ function getWebviewContent(): string {
   if (profilesCheckAll) {
     profilesCheckAll.addEventListener('change', (event) => {
       setAllInTbody(profileRowsEl, 'profileName', event.target.checked);
-      refreshPreview();
+      refreshState();
     });
   }
 
   if (permsetsCheckAll) {
     permsetsCheckAll.addEventListener('change', (event) => {
       setAllInTbody(permsetRowsEl, 'permsetName', event.target.checked);
-      refreshPreview();
+      refreshState();
     });
   }
 
@@ -1028,30 +1378,23 @@ function getWebviewContent(): string {
   profileRowsEl.addEventListener('change', (event) => {
     const target = event.target;
     if (target && target.type === 'checkbox') {
-      refreshPreview();
+      const row = target.closest('tr');
+      if (row) {
+        row.classList.toggle('selected-row', target.checked);
+      }
+      refreshState();
     }
   });
 
   permsetRowsEl.addEventListener('change', (event) => {
     const target = event.target;
     if (target && target.type === 'checkbox') {
-      refreshPreview();
+      const row = target.closest('tr');
+      if (row) {
+        row.classList.toggle('selected-row', target.checked);
+      }
+      refreshState();
     }
-  });
-
-  document.querySelectorAll('.accordion-header').forEach((button) => {
-    button.addEventListener('click', () => {
-      const targetId = button.getAttribute('data-target');
-      if (!targetId) {
-        return;
-      }
-      const panel = document.getElementById(targetId);
-      if (!panel) {
-        return;
-      }
-      const isHidden = panel.style.display === 'none';
-      panel.style.display = isHidden ? 'block' : 'none';
-    });
   });
 
   // Notify extension that webview is ready
