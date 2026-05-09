@@ -27,6 +27,8 @@ interface FlsConfigEntry {
   // When true, create the field metadata before applying FLS.
   create?: boolean;
   label?: string;
+  description?: string;
+  inlineHelpText?: string;
   type?: SupportedFieldType;
   length?: number;
   precision?: number;
@@ -596,6 +598,8 @@ function buildCustomFieldMetadata(
     ['fullName', fullName],
     ['label', label]
   ];
+  elements.push(['description', entry.description || '']);
+  elements.push(['inlineHelpText', entry.inlineHelpText || '']);
 
   switch (type) {
     case 'Text':
@@ -1213,14 +1217,17 @@ function getWebviewContent(): string {
                   <span class="icon-heading" title="Remove field permission from selected targets" aria-label="Remove field permission from selected targets">&#128465;</span>
                 </th>
                 <th class="checkbox-col">CREATE</th>
-                <th class="name-col">Field API Name</th>
+                <th class="type-col">Object</th>
                 <th class="name-col">Label</th>
+                <th class="name-col">Field API Name</th>
                 <th class="type-col">Type</th>
                 <th class="short-col">Len</th>
                 <th class="two-digit-col">Prec</th>
                 <th class="two-digit-col">Scale</th>
                 <th class="checkbox-col">READ</th>
                 <th class="checkbox-col">EDIT</th>
+                <th class="name-col">Description</th>
+                <th class="name-col">Help Text</th>
               </tr>
             </thead>
             <tbody id="field-rows"></tbody>
@@ -1360,6 +1367,31 @@ function getWebviewContent(): string {
       .replace(/\\b\\w/g, (char) => char.toUpperCase());
   }
 
+  function fieldApiNameFromLabel(label) {
+    const base = (label || '')
+      .trim()
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const safeBase = base || 'New_Field';
+    return safeBase.replace(/__c$/i, '') + '__c';
+  }
+
+  function objectNameFromField(value) {
+    const parts = (value || '').trim().split('.');
+    return parts.length === 2 ? parts[0] : '';
+  }
+
+  function generatedQualifiedFieldName(currentValue, label, objectName) {
+    const parts = (currentValue || '').trim().split('.');
+    const generatedFieldName = fieldApiNameFromLabel(label);
+    const prefix = (objectName || (parts.length === 2 ? parts[0] : '')).trim();
+    if (prefix) {
+      return prefix + '.' + generatedFieldName;
+    }
+    return generatedFieldName;
+  }
+
   function setNumberInput(input, value, fallback) {
     input.value = String(Number.isFinite(Number(value)) ? Number(value) : fallback);
   }
@@ -1424,16 +1456,25 @@ function getWebviewContent(): string {
     createTd.appendChild(createCheckbox);
     tr.appendChild(createTd);
 
-    const fieldTd = document.createElement('td');
-    fieldTd.className = 'name-col';
-    const fieldInput = document.createElement('input');
-    fieldInput.type = 'text';
-    fieldInput.value = entry.field || '';
-    fieldInput.placeholder = 'e.g. Account.My_Field__c';
-    fieldInput.spellcheck = false;
-    fieldInput.dataset.fieldControl = 'field';
-    fieldTd.appendChild(fieldInput);
-    tr.appendChild(fieldTd);
+    const objectTd = document.createElement('td');
+    objectTd.className = 'type-col';
+    const objectSelect = document.createElement('select');
+    objectSelect.dataset.fieldControl = 'object';
+    const emptyObjectOption = document.createElement('option');
+    emptyObjectOption.value = '';
+    emptyObjectOption.textContent = 'Object';
+    objectSelect.appendChild(emptyObjectOption);
+    const entryObjectName = objectNameFromField(entry.field || '');
+    const objectNames = Array.from(new Set([entryObjectName].concat(availableObjects))).filter(Boolean);
+    for (const objectName of objectNames) {
+      const option = document.createElement('option');
+      option.value = objectName;
+      option.textContent = objectName;
+      objectSelect.appendChild(option);
+    }
+    objectSelect.value = entryObjectName;
+    objectTd.appendChild(objectSelect);
+    tr.appendChild(objectTd);
 
     const labelTd = document.createElement('td');
     labelTd.className = 'name-col';
@@ -1445,6 +1486,17 @@ function getWebviewContent(): string {
     labelInput.dataset.fieldControl = 'label';
     labelTd.appendChild(labelInput);
     tr.appendChild(labelTd);
+
+    const fieldTd = document.createElement('td');
+    fieldTd.className = 'name-col';
+    const fieldInput = document.createElement('input');
+    fieldInput.type = 'text';
+    fieldInput.value = entry.field || '';
+    fieldInput.placeholder = 'e.g. Account.My_Field__c';
+    fieldInput.spellcheck = false;
+    fieldInput.dataset.fieldControl = 'field';
+    fieldTd.appendChild(fieldInput);
+    tr.appendChild(fieldTd);
 
     const typeTd = document.createElement('td');
     typeTd.className = 'type-col';
@@ -1516,10 +1568,35 @@ function getWebviewContent(): string {
     editableTd.appendChild(editableInput);
     tr.appendChild(editableTd);
 
+    const descriptionTd = document.createElement('td');
+    descriptionTd.className = 'name-col';
+    const descriptionInput = document.createElement('input');
+    descriptionInput.type = 'text';
+    descriptionInput.value = entry.description || '';
+    descriptionInput.placeholder = 'Metadata description';
+    descriptionInput.spellcheck = true;
+    descriptionInput.dataset.fieldControl = 'description';
+    descriptionTd.appendChild(descriptionInput);
+    tr.appendChild(descriptionTd);
+
+    const helpTextTd = document.createElement('td');
+    helpTextTd.className = 'name-col';
+    const helpTextInput = document.createElement('input');
+    helpTextInput.type = 'text';
+    helpTextInput.value = entry.inlineHelpText || '';
+    helpTextInput.placeholder = 'Inline help text';
+    helpTextInput.spellcheck = true;
+    helpTextInput.dataset.fieldControl = 'inlineHelpText';
+    helpTextTd.appendChild(helpTextInput);
+    tr.appendChild(helpTextTd);
+
     function syncCreateControls() {
       const createMode = createCheckbox.checked;
       const removeMode = deleteFlagCheckbox.checked;
+      objectSelect.disabled = !createMode || removeMode;
       labelInput.disabled = !createMode || removeMode;
+      descriptionInput.disabled = !createMode || removeMode;
+      helpTextInput.disabled = !createMode || removeMode;
       typeSelect.disabled = !createMode || removeMode;
       lengthInput.disabled = !createMode || removeMode || !usesLength(typeSelect.value);
       precisionInput.disabled = !createMode || removeMode || !usesPrecisionScale(typeSelect.value);
@@ -1551,16 +1628,48 @@ function getWebviewContent(): string {
       refreshState();
     });
     createCheckbox.addEventListener('change', () => {
+      if (createCheckbox.checked) {
+        fieldInput.value = generatedQualifiedFieldName(
+          fieldInput.value,
+          labelInput.value || inferLabelFromField(fieldInput.value),
+          objectSelect.value
+        );
+      }
       syncCreateControls();
       refreshState();
     });
     fieldInput.addEventListener('input', () => {
+      const objectName = objectNameFromField(fieldInput.value);
+      if (objectName) {
+        objectSelect.value = objectName;
+      }
       if (createCheckbox.checked && !labelInput.value.trim()) {
         labelInput.value = inferLabelFromField(fieldInput.value);
       }
       refreshState();
     });
-    labelInput.addEventListener('input', refreshState);
+    labelInput.addEventListener('input', () => {
+      if (createCheckbox.checked) {
+        fieldInput.value = generatedQualifiedFieldName(
+          fieldInput.value,
+          labelInput.value,
+          objectSelect.value
+        );
+      }
+      refreshState();
+    });
+    objectSelect.addEventListener('change', () => {
+      if (createCheckbox.checked) {
+        fieldInput.value = generatedQualifiedFieldName(
+          fieldInput.value,
+          labelInput.value || inferLabelFromField(fieldInput.value),
+          objectSelect.value
+        );
+      }
+      refreshState();
+    });
+    descriptionInput.addEventListener('input', refreshState);
+    helpTextInput.addEventListener('input', refreshState);
     typeSelect.addEventListener('change', () => {
       if (usesLength(typeSelect.value)) {
         setNumberInput(lengthInput, defaultLengthForType(typeSelect.value), defaultLengthForType(typeSelect.value));
@@ -1690,6 +1799,8 @@ function getWebviewContent(): string {
       const create = tr.querySelector('[data-field-control="create"]');
       const field = tr.querySelector('[data-field-control="field"]');
       const label = tr.querySelector('[data-field-control="label"]');
+      const description = tr.querySelector('[data-field-control="description"]');
+      const inlineHelpText = tr.querySelector('[data-field-control="inlineHelpText"]');
       const type = tr.querySelector('[data-field-control="type"]');
       const length = tr.querySelector('[data-field-control="length"]');
       const precision = tr.querySelector('[data-field-control="precision"]');
@@ -1708,6 +1819,8 @@ function getWebviewContent(): string {
       if (create && create.checked) {
         entry.create = true;
         entry.label = label && label.value.trim() ? label.value.trim() : inferLabelFromField(field.value);
+        entry.description = description ? description.value.trim() : '';
+        entry.inlineHelpText = inlineHelpText ? inlineHelpText.value.trim() : '';
         entry.type = type && type.value ? type.value : 'Text';
         if (usesLength(entry.type)) {
           entry.length = Number(
@@ -1835,6 +1948,7 @@ function getWebviewContent(): string {
       const input = tr.querySelector('[data-field-control="field"]');
       const create = tr.querySelector('[data-field-control="create"]');
       const remove = tr.querySelector('[data-field-control="remove"]');
+      const object = tr.querySelector('[data-field-control="object"]');
       const label = tr.querySelector('[data-field-control="label"]');
       const type = tr.querySelector('[data-field-control="type"]');
       const length = tr.querySelector('[data-field-control="length"]');
@@ -1866,6 +1980,10 @@ function getWebviewContent(): string {
       const removeMode = !!(remove && remove.checked);
       if (createMode) {
         createCount += 1;
+        if (!object || !object.value) {
+          invalidCount += 1;
+          markInvalid(object, 'Object is required when creating a field.');
+        }
         if (!parsed.fieldApiName.endsWith('__c')) {
           invalidCount += 1;
           markInvalid(input, 'Created fields must use a custom API name ending in __c.');

@@ -49,12 +49,17 @@ In multi-root VS Code workspaces, the extension uses the first workspace folder 
 Describe *what* FLS you want:
 
 - Add one row per field:
-  - **Field API Name** – e.g. `Account.Type`, `Contact.Test__c`.
   - **Create** – create a new custom field metadata file before applying FLS.
-  - **Label / Type / Len / Prec / Scale** – metadata settings used only when **Create** is checked.
+  - **Object** – the Salesforce object that will prefix generated custom field API names.
+  - **Label** – the field label. When **Create** is checked, typing a label auto-generates the field API name.
+  - **Field API Name** – e.g. `Account.Type`, `Contact.Test__c`.
+  - **Object / Label / Type / Len / Prec / Scale / Description / Help Text** – metadata settings used only when **Create** is checked.
+    - Generated custom field API names use `Object.Words_Only__c` format.
+    - The generated field name trims whitespace, converts separators to underscores, drops unsupported characters, and ends in `__c`.
     - Irrelevant metadata inputs are disabled by field type. For example, Text uses **Len** and disables **Prec** and **Scale**.
     - Text and Text Area default **Len** to `255`.
     - Text Area Long and Text Area (Rich) default **Len** to `32768`.
+    - Description and Help Text appear at the end of the row and are written to metadata even when blank.
   - **Readable** – grant read access.
   - **Editable** – grant edit access. Turning this on automatically turns on **Readable**.
 - Trash icon in the first column deletes the row from the configuration.
@@ -69,6 +74,7 @@ Describe *what* FLS you want:
 When **Create** is checked:
 
 - The object folder must already exist under `force-app/main/default/objects`.
+- The object must be selected before a generated API name is valid.
 - The field API name must end in `__c`.
 - The field must not already exist in source metadata.
 - Supported field types are:
@@ -107,6 +113,8 @@ You can commit this file and share it with your team. The file stores field rule
     {
       "field": "Account.Customer_Score__c",
       "label": "Customer Score",
+      "description": "Internal score used to prioritize account follow-up.",
+      "inlineHelpText": "Enter a whole number score for this account.",
       "type": "Number",
       "precision": 18,
       "scale": 0,
