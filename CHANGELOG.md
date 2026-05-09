@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.2.3 - 05/08/2026
+
+- Refreshed the webview layout with a sticky command bar, summary badges, selected target preview, and clearer field and target panels.
+- Renamed the run action to **Apply FLS Changes**.
+- Added inline validation for duplicate field API names, empty field rules, and missing target selections.
+- Disabled apply until there is at least one valid field rule and one selected profile or permission set.
+- Added search result counts and header checkboxes that select or clear only visible profile and permission set rows.
+- Persisted selected profiles and permission sets in `fls.config.json` alongside field rules.
+- Updated the extension icon asset.
+
 ## 0.1.1 - 05/08/2026
 
 - Fixed target selection so leaving permission sets unchecked no longer applies FLS changes to every permission set.

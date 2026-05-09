@@ -8,11 +8,11 @@
 
 1. Open your Salesforce DX project in VS Code.
 2. Install / run the **SF-FLS-MANAGER** extension.
-3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run  
+3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run
    **Salesforce: Open FLS Commit Manager**.
 4. In **Step 1**, add the fields and access levels you care about.
 5. In **Step 2**, tick the profiles and permission sets you want to update.
-6. Click **Run FLS Commit**.
+6. Click **Apply FLS Changes**.
 7. Review the Git diff and commit when you’re happy.
 
 <img width="3320" height="1908" alt="image" src="https://github.com/user-attachments/assets/0ca15d66-5835-4372-8fb2-d084af9de3ca" />
@@ -28,7 +28,9 @@
 - Simple “add/update vs remove” switch per field.
 - Clean, minimal diffs – files are only changed when something in FLS actually changes.
 - Explicit target selection – unchecked profiles and permission sets are skipped.
+- Saved target selections – profiles and permission sets are stored with your field rules in `fls.config.json`.
 - Workspace-scoped discovery – profiles and permission sets are read from the active project folder, with duplicate names collapsed in the picker.
+- Inline validation for missing fields, duplicate field API names, and missing targets.
 
 The extension scans your workspace for:
 
@@ -47,18 +49,35 @@ Describe *what* FLS you want:
   - **Field API Name** – e.g. `Account.Type`, `Contact.Test__c`.
   - **Readable** – grant read access.
   - **Editable** – grant edit access. Turning this on automatically turns on **Readable**.
-- **Delete** column:
+- Trash icon in the first column deletes the row from the configuration.
+- Trash can checkbox column:
   - When checked, this rule means “remove this field permission” from the selected targets.
   - Use this when you want to strip access that may already exist.
-- Trash icon (first column) deletes the row from the configuration entirely.
+- Duplicate field API names are highlighted and must be fixed before you can apply changes.
 
-On the right you’ll see a **Preview of Selections** that shows which profiles and permission sets are currently selected in Step 2.
+The top command bar shows how many field rules, selected targets, and total operations are currently configured.
+The **Selected Targets** panel shows which profiles and permission sets are currently selected in Step 2.
 
 All of this is stored in a single config file at the workspace root:
 
 - `fls.config.json`
 
-You can commit this file and share it with your team.
+You can commit this file and share it with your team. The file stores field rules plus the selected profiles and permission sets:
+
+```json
+{
+  "fields": [
+    {
+      "field": "Account.Type",
+      "readable": true,
+      "editable": false,
+      "remove": false
+    }
+  ],
+  "profiles": ["Admin"],
+  "permissionSets": ["Sales_User"]
+}
+```
 
 ---
 
@@ -68,14 +87,15 @@ Decide *where* the rules from Step 1 will run:
 
 - A search box filters both lists by name.
 - **Profiles** and **Permission Sets** each have:
-  - A checkbox column to include/exclude each item (with “check all” in the header).
+  - A checkbox column to include/exclude each item.
+  - A header checkbox to select or clear all currently visible rows.
   - A **Name** column (taken from the file name, e.g.  
     `Sales Manager.profile-meta.xml` → `Sales Manager`).
-- All checkboxes start **unchecked** every time you open the manager, so you always make an explicit choice.
-- If no profiles or permission sets are checked, the run stops with a warning instead of updating every file.
+- Existing selections are reloaded from `fls.config.json` when present.
+- If no profiles or permission sets are checked, the apply button stays disabled and the extension will not update every file by accident.
 - As you change selections, the preview in Step 1 updates.
 
-When ready, click **Run FLS Commit**:
+When ready, click **Apply FLS Changes**:
 
 - Your current rules and selections are saved to `fls.config.json`.
 - The extension updates just the selected profiles and permission sets.
@@ -120,6 +140,7 @@ Build output is generated in `out/` and should not be committed.
 - **“Run did nothing”**
   - Confirm you have at least one field in Step 1.
   - Confirm at least one profile or permission set is checked in Step 2.
+  - Confirm there are no duplicate field API names highlighted in the Fields table.
   - Remember: if a field is marked Delete and it doesn’t exist in a file, that file won’t change.
 
 - **“I see duplicate profile or permission set names”**
