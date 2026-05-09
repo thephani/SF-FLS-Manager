@@ -10,7 +10,7 @@
 2. Install / run the **SF-FLS-MANAGER** extension.
 3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run
    **Salesforce: Open FLS Commit Manager**.
-4. In **Step 1**, add the fields and access levels you care about.
+4. In **Step 1**, add the fields and access levels you care about. Check **Create** when the field metadata should be created first.
 5. In **Step 2**, tick the profiles and permission sets you want to update.
 6. Click **Apply FLS Changes**.
 7. Review the Git diff and commit when you’re happy.
@@ -22,6 +22,7 @@
 ### What it does
 
 - Central place to define FLS rules for fields.
+- Optional custom field creation before FLS is applied.
 - One click to push those rules to:
   - Multiple **profiles** (`*.profile-meta.xml`)
   - Multiple **permission sets** (`*.permissionset-meta.xml`)
@@ -30,12 +31,14 @@
 - Explicit target selection – unchecked profiles and permission sets are skipped.
 - Saved target selections – profiles and permission sets are stored with your field rules in `fls.config.json`.
 - Workspace-scoped discovery – profiles and permission sets are read from the active project folder, with duplicate names collapsed in the picker.
-- Inline validation for missing fields, duplicate field API names, and missing targets.
+- Inline validation for missing dots in `Object.Field`, duplicate field API names, missing custom fields, and missing targets.
+- Full-width field editor with selected targets and target pickers below it in a 40/60 split.
 
 The extension scans your workspace for:
 
 - Profiles: `**/force-app/main/default/profiles/**/*.profile-meta.xml`
 - Permission sets: `**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml`
+- Objects and fields: `**/force-app/main/default/objects/**`
 
 In multi-root VS Code workspaces, the extension uses the first workspace folder as the active project.
 
@@ -47,13 +50,41 @@ Describe *what* FLS you want:
 
 - Add one row per field:
   - **Field API Name** – e.g. `Account.Type`, `Contact.Test__c`.
+  - **Create** – create a new custom field metadata file before applying FLS.
+  - **Label / Type / Len / Prec / Scale** – metadata settings used only when **Create** is checked.
+    - Irrelevant metadata inputs are disabled by field type. For example, Text uses **Len** and disables **Prec** and **Scale**.
+    - Text and Text Area default **Len** to `255`.
+    - Text Area Long and Text Area (Rich) default **Len** to `32768`.
   - **Readable** – grant read access.
   - **Editable** – grant edit access. Turning this on automatically turns on **Readable**.
 - Trash icon in the first column deletes the row from the configuration.
 - Trash can checkbox column:
   - When checked, this rule means “remove this field permission” from the selected targets.
   - Use this when you want to strip access that may already exist.
+- Field API names must include the object and field separated by a dot.
 - Duplicate field API names are highlighted and must be fixed before you can apply changes.
+- Existing custom fields are validated against source metadata under `force-app/main/default/objects`.
+- Standard fields such as `Account.Name` are allowed because they may not exist as local `.field-meta.xml` files.
+
+When **Create** is checked:
+
+- The object folder must already exist under `force-app/main/default/objects`.
+- The field API name must end in `__c`.
+- The field must not already exist in source metadata.
+- Supported field types are:
+  - Text
+  - Text Area
+  - Text Area Long
+  - Text Area (Rich)
+  - Number
+  - URL
+  - Currency
+  - Checkbox
+  - Email
+  - Date
+  - DateTime
+  - Percent
+  - Phone
 
 The top command bar shows how many field rules, selected targets, and total operations are currently configured.
 The **Selected Targets** panel shows which profiles and permission sets are currently selected in Step 2.
@@ -72,6 +103,17 @@ You can commit this file and share it with your team. The file stores field rule
       "readable": true,
       "editable": false,
       "remove": false
+    },
+    {
+      "field": "Account.Customer_Score__c",
+      "label": "Customer Score",
+      "type": "Number",
+      "precision": 18,
+      "scale": 0,
+      "readable": true,
+      "editable": true,
+      "remove": false,
+      "create": true
     }
   ],
   "profiles": ["Admin"],
@@ -98,6 +140,7 @@ Decide *where* the rules from Step 1 will run:
 When ready, click **Apply FLS Changes**:
 
 - Your current rules and selections are saved to `fls.config.json`.
+- Any rows marked **Create** generate `.field-meta.xml` files first.
 - The extension updates just the selected profiles and permission sets.
 - A notification tells you how many of each were updated and how many fields per target.
 
@@ -108,6 +151,8 @@ When ready, click **Apply FLS Changes**:
 You don’t need to touch XML, but here’s what happens under the hood:
 
 - For every selected profile or permission set:
+  - Rows marked **Create** first write a field metadata file at:
+    `force-app/main/default/objects/<Object>/fields/<Field>.field-meta.xml`
   - For each field row **without** Delete checked:
     - If the field permission is missing, it’s added.
     - If it exists, readable/editable are updated to match your checkboxes.

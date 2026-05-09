@@ -1,5 +1,12 @@
 # Change Log
 
+## Unreleased
+
+- Added optional custom field creation before FLS updates, supporting Text, Text Area, Long Text Area, Rich Text Area, Number, URL, Currency, Checkbox, Email, Date, DateTime, Percent, and Phone.
+- Added field API validation for missing `Object.Field` dots, duplicate rows, existing custom fields, and create-field settings.
+- Moved the Fields panel to a full-width top row, with Selected Targets and Targets below it in a 40/60 split.
+- Improved field creation controls with clearer disabled states and automatic text length defaults.
+
 ## 0.2.3 - 05/08/2026
 
 - Refreshed the webview layout with a sticky command bar, summary badges, selected target preview, and clearer field and target panels.

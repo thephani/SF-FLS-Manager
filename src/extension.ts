@@ -2,6 +2,21 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
+type SupportedFieldType =
+  | 'Text'
+  | 'TextArea'
+  | 'LongTextArea'
+  | 'Html'
+  | 'Number'
+  | 'Url'
+  | 'Currency'
+  | 'Checkbox'
+  | 'Email'
+  | 'Date'
+  | 'DateTime'
+  | 'Percent'
+  | 'Phone';
+
 interface FlsConfigEntry {
   field: string;
   readable: boolean;
@@ -9,12 +24,35 @@ interface FlsConfigEntry {
   // When true, existing field permissions will be removed
   // instead of added/updated.
   remove?: boolean;
+  // When true, create the field metadata before applying FLS.
+  create?: boolean;
+  label?: string;
+  type?: SupportedFieldType;
+  length?: number;
+  precision?: number;
+  scale?: number;
+  visibleLines?: number;
 }
 
 interface FlsConfig {
   fields: FlsConfigEntry[];
   profiles?: string[];
   permissionSets?: string[];
+}
+
+interface ObjectFieldIndex {
+  objects: string[];
+  fields: string[];
+}
+
+interface ParsedFieldName {
+  objectApiName: string;
+  fieldApiName: string;
+}
+
+interface FieldCreationResult {
+  created: number;
+  skipped: number;
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -42,6 +80,7 @@ export function activate(context: vscode.ExtensionContext) {
       const availablePermissionSets = uniqueSortedNames(
         permsetFiles.map((uri) => permissionSetNameFromUri(uri))
       );
+      const objectFieldIndex = await buildObjectFieldIndex(workspaceFolder);
 
       const panel = vscode.window.createWebviewPanel(
         'sfFlsConfigBuilder',
@@ -90,7 +129,9 @@ export function activate(context: vscode.ExtensionContext) {
                   selectedProfiles,
                   selectedPermissionSets,
                   availableProfiles,
-                  availablePermissionSets
+                  availablePermissionSets,
+                  availableObjects: objectFieldIndex.objects,
+                  availableFields: objectFieldIndex.fields
                 }
               });
             } catch {
@@ -102,7 +143,9 @@ export function activate(context: vscode.ExtensionContext) {
                   selectedProfiles: [],
                   selectedPermissionSets: [],
                   availableProfiles,
-                  availablePermissionSets
+                  availablePermissionSets,
+                  availableObjects: objectFieldIndex.objects,
+                  availableFields: objectFieldIndex.fields
                 }
               });
             }
@@ -202,6 +245,65 @@ function uniqueSortedNames(names: string[]): string[] {
   return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
 }
 
+async function buildObjectFieldIndex(
+  workspaceFolder: vscode.WorkspaceFolder
+): Promise<ObjectFieldIndex> {
+  const objectFiles = await findWorkspaceFiles(
+    workspaceFolder,
+    '**/force-app/main/default/objects/**/*.object-meta.xml'
+  );
+  const fieldFiles = await findWorkspaceFiles(
+    workspaceFolder,
+    '**/force-app/main/default/objects/**/fields/**/*.field-meta.xml'
+  );
+
+  const objects = new Set<string>();
+  const fields = new Set<string>();
+
+  for (const uri of objectFiles) {
+    const objectName = objectNameFromObjectFileUri(uri);
+    if (objectName) {
+      objects.add(objectName);
+    }
+  }
+
+  for (const uri of fieldFiles) {
+    const parsed = fieldNameFromFieldFileUri(uri);
+    if (parsed) {
+      objects.add(parsed.objectApiName);
+      fields.add(`${parsed.objectApiName}.${parsed.fieldApiName}`);
+    }
+  }
+
+  return {
+    objects: uniqueSortedNames(Array.from(objects)),
+    fields: uniqueSortedNames(Array.from(fields))
+  };
+}
+
+function objectNameFromObjectFileUri(uri: vscode.Uri): string | undefined {
+  const base = path.basename(uri.fsPath);
+  const objectFromFile = base.replace(/\.object-meta\.xml$/i, '');
+  const objectFromFolder = path.basename(path.dirname(uri.fsPath));
+  return objectFromFile || objectFromFolder || undefined;
+}
+
+function fieldNameFromFieldFileUri(uri: vscode.Uri): ParsedFieldName | undefined {
+  const parts = uri.fsPath.split(path.sep);
+  const fieldsIndex = parts.lastIndexOf('fields');
+  if (fieldsIndex <= 0 || fieldsIndex >= parts.length - 1) {
+    return undefined;
+  }
+
+  const objectApiName = parts[fieldsIndex - 1];
+  const fieldApiName = path.basename(uri.fsPath).replace(/\.field-meta\.xml$/i, '');
+  if (!objectApiName || !fieldApiName) {
+    return undefined;
+  }
+
+  return { objectApiName, fieldApiName };
+}
+
 function profileNameFromUri(uri: vscode.Uri): string {
   const base = path.basename(uri.fsPath);
   return base.replace(/\.profile-meta\.xml$/i, '');
@@ -219,6 +321,26 @@ async function applyFlsToProfiles(
   const fieldsConfig = Array.isArray(config.fields) ? config.fields : [];
   if (fieldsConfig.length === 0) {
     vscode.window.showWarningMessage('SF-FLS-MANAGER: No fields configured. Nothing to apply.');
+    return;
+  }
+
+  const invalidField = fieldsConfig.find(
+    (entry) => entry.field && !parseQualifiedFieldName(entry.field)
+  );
+  if (invalidField) {
+    vscode.window.showWarningMessage(
+      `SF-FLS-MANAGER: Field "${invalidField.field}" must use Object.Field format.`
+    );
+    return;
+  }
+
+  let fieldCreationResult: FieldCreationResult = { created: 0, skipped: 0 };
+  try {
+    fieldCreationResult = await createConfiguredFields(workspaceFolder, fieldsConfig);
+  } catch (error: any) {
+    vscode.window.showErrorMessage(
+      `SF-FLS-MANAGER: Failed to create field metadata - ${error?.message ?? String(error)}`
+    );
     return;
   }
 
@@ -252,9 +374,15 @@ async function applyFlsToProfiles(
   );
 
   if (targetProfileFiles.length === 0 && targetPermsetFiles.length === 0) {
-    vscode.window.showWarningMessage(
-      'SF-FLS-MANAGER: No profiles or permission sets selected. Check at least one target before running.'
-    );
+    if (fieldCreationResult.created > 0) {
+      vscode.window.showInformationMessage(
+        `SF-FLS-MANAGER: Created ${fieldCreationResult.created} field(s). No profiles or permission sets were selected for FLS updates.`
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        'SF-FLS-MANAGER: No profiles or permission sets selected. Check at least one target before running.'
+      );
+    }
     return;
   }
 
@@ -336,16 +464,235 @@ async function applyFlsToProfiles(
   }
 
   if (profilesUpdated === 0 && permissionSetsUpdated === 0) {
-    vscode.window.showWarningMessage('SF-FLS-MANAGER: No profiles or permission sets were updated.');
+    if (fieldCreationResult.created > 0) {
+      vscode.window.showInformationMessage(
+        `SF-FLS-MANAGER: Created ${fieldCreationResult.created} field(s). No profiles or permission sets needed FLS updates.`
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        'SF-FLS-MANAGER: No profiles or permission sets were updated.'
+      );
+    }
     return;
   }
 
   const fieldsPerTarget = fieldsConfig.length;
   const totalTargets = profilesUpdated + permissionSetsUpdated;
   const totalFieldOps = totalTargets * fieldsPerTarget;
+  const createdSummary =
+    fieldCreationResult.created > 0 ? `Created ${fieldCreationResult.created} field(s). ` : '';
   vscode.window.showInformationMessage(
-    `SF-FLS-MANAGER: Updated ${profilesUpdated} profile(s) and ${permissionSetsUpdated} permission set(s), ${fieldsPerTarget} field(s) each (${totalFieldOps} field updates).`
+    `SF-FLS-MANAGER: ${createdSummary}Updated ${profilesUpdated} profile(s) and ${permissionSetsUpdated} permission set(s), ${fieldsPerTarget} field(s) each (${totalFieldOps} field updates).`
   );
+}
+
+async function createConfiguredFields(
+  workspaceFolder: vscode.WorkspaceFolder,
+  fieldsConfig: FlsConfigEntry[]
+): Promise<FieldCreationResult> {
+  const objectIndex = await buildObjectFieldIndex(workspaceFolder);
+  const availableObjects = new Set(objectIndex.objects.map((name) => name.toLowerCase()));
+  const availableFields = new Set(objectIndex.fields.map((name) => name.toLowerCase()));
+  let created = 0;
+  let skipped = 0;
+
+  for (const entry of fieldsConfig) {
+    if (!entry.create || entry.remove) {
+      continue;
+    }
+
+    const parsed = parseQualifiedFieldName(entry.field);
+    if (!parsed) {
+      throw new Error(`Field "${entry.field}" must use Object.Field format.`);
+    }
+    if (!parsed.fieldApiName.endsWith('__c')) {
+      throw new Error(`Field "${entry.field}" must use a custom field API name ending in __c.`);
+    }
+    if (!availableObjects.has(parsed.objectApiName.toLowerCase())) {
+      throw new Error(`Object "${parsed.objectApiName}" was not found in force-app metadata.`);
+    }
+    if (availableFields.has(entry.field.toLowerCase())) {
+      skipped += 1;
+      continue;
+    }
+
+    const fieldType = normalizeFieldType(entry.type);
+    if (!fieldType) {
+      throw new Error(`Field "${entry.field}" has an unsupported field type.`);
+    }
+
+    const label = (entry.label || labelFromApiName(parsed.fieldApiName)).trim();
+    const fieldFolderUri = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      'force-app',
+      'main',
+      'default',
+      'objects',
+      parsed.objectApiName,
+      'fields'
+    );
+    const fieldUri = vscode.Uri.joinPath(fieldFolderUri, `${parsed.fieldApiName}.field-meta.xml`);
+    await vscode.workspace.fs.createDirectory(fieldFolderUri);
+    const metadata = buildCustomFieldMetadata(parsed.fieldApiName, label, fieldType, entry);
+    await vscode.workspace.fs.writeFile(fieldUri, Buffer.from(metadata, 'utf8'));
+
+    availableFields.add(entry.field.toLowerCase());
+    created += 1;
+  }
+
+  return { created, skipped };
+}
+
+function parseQualifiedFieldName(value: string): ParsedFieldName | undefined {
+  const parts = (value || '').trim().split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return undefined;
+  }
+  return {
+    objectApiName: parts[0],
+    fieldApiName: parts[1]
+  };
+}
+
+function normalizeFieldType(value: unknown): SupportedFieldType | undefined {
+  const allowed: SupportedFieldType[] = [
+    'Text',
+    'TextArea',
+    'LongTextArea',
+    'Html',
+    'Number',
+    'Url',
+    'Currency',
+    'Checkbox',
+    'Email',
+    'Date',
+    'DateTime',
+    'Percent',
+    'Phone'
+  ];
+  return allowed.find((type) => type === value);
+}
+
+function labelFromApiName(fieldApiName: string): string {
+  return fieldApiName
+    .replace(/__c$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function numberOrDefault(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function buildCustomFieldMetadata(
+  fullName: string,
+  label: string,
+  type: SupportedFieldType,
+  entry: FlsConfigEntry
+): string {
+  const elements: Array<[string, string | number | boolean]> = [
+    ['fullName', fullName],
+    ['label', label]
+  ];
+
+  switch (type) {
+    case 'Text':
+      elements.push(['length', clampInteger(entry.length, 1, 255, 255)]);
+      elements.push(['required', false]);
+      elements.push(['type', 'Text']);
+      elements.push(['unique', false]);
+      break;
+    case 'TextArea':
+      elements.push(['length', clampInteger(entry.length, 1, 255, 255)]);
+      elements.push(['type', 'TextArea']);
+      break;
+    case 'LongTextArea':
+      elements.push(['length', clampInteger(entry.length, 256, 131072, 32768)]);
+      elements.push(['type', 'LongTextArea']);
+      elements.push(['visibleLines', clampInteger(entry.visibleLines, 2, 50, 3)]);
+      break;
+    case 'Html':
+      elements.push(['length', clampInteger(entry.length, 256, 131072, 32768)]);
+      elements.push(['type', 'Html']);
+      elements.push(['visibleLines', clampInteger(entry.visibleLines, 2, 50, 3)]);
+      break;
+    case 'Number':
+      {
+        const precision = clampInteger(entry.precision, 1, 18, 18);
+        const scale = clampInteger(entry.scale, 0, precision - 1, 0);
+        elements.push(['precision', precision]);
+        elements.push(['required', false]);
+        elements.push(['scale', scale]);
+      }
+      elements.push(['type', 'Number']);
+      elements.push(['unique', false]);
+      break;
+    case 'Currency':
+      {
+        const precision = clampInteger(entry.precision, 1, 18, 18);
+        const scale = clampInteger(entry.scale, 0, precision - 1, 2);
+        elements.push(['precision', precision]);
+        elements.push(['required', false]);
+        elements.push(['scale', scale]);
+      }
+      elements.push(['type', 'Currency']);
+      break;
+    case 'Percent':
+      {
+        const precision = clampInteger(entry.precision, 1, 18, 18);
+        const scale = clampInteger(entry.scale, 0, precision - 1, 2);
+        elements.push(['precision', precision]);
+        elements.push(['required', false]);
+        elements.push(['scale', scale]);
+      }
+      elements.push(['type', 'Percent']);
+      break;
+    case 'Checkbox':
+      elements.push(['defaultValue', false]);
+      elements.push(['type', 'Checkbox']);
+      break;
+    case 'Url':
+    case 'Email':
+    case 'Date':
+    case 'DateTime':
+    case 'Phone':
+      elements.push(['required', false]);
+      elements.push(['type', type]);
+      break;
+  }
+
+  const body = elements
+    .map(([name, value]) => `    <${name}>${escapeXml(String(value))}</${name}>`)
+    .join('\n');
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">',
+    body,
+    '</CustomField>',
+    ''
+  ].join('\n');
+}
+
+function clampInteger(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number
+): number {
+  const raw = numberOrDefault(value, fallback);
+  return Math.max(min, Math.min(max, Math.round(raw)));
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 function updateFieldPermissionsObject(node: any, fieldsConfig: FlsConfigEntry[]): boolean {
@@ -482,9 +829,15 @@ function getWebviewContent(): string {
 
   .workspace {
     display: grid;
-    grid-template-columns: minmax(360px, 2fr) minmax(520px, 3fr);
+    grid-template-columns: 1fr;
     gap: 14px;
     padding: 14px 18px 18px;
+  }
+
+  .lower-workspace {
+    display: grid;
+    grid-template-columns: minmax(320px, 2fr) minmax(520px, 3fr);
+    gap: 14px;
   }
 
   .panel {
@@ -563,7 +916,9 @@ function getWebviewContent(): string {
   }
 
   input[type="text"],
-  input[type="search"] {
+  input[type="number"],
+  input[type="search"],
+  select {
     width: 100%;
     background-color: var(--vscode-input-background, var(--bg-elevated));
     border: 1px solid var(--vscode-input-border, var(--border-subtle));
@@ -574,12 +929,32 @@ function getWebviewContent(): string {
   }
 
   input[type="text"]:focus,
-  input[type="search"]:focus {
+  input[type="number"]:focus,
+  input[type="search"]:focus,
+  select:focus {
     outline: 1px solid var(--border-strong);
     outline-offset: -1px;
   }
 
+  input:disabled,
+  select:disabled {
+    background-color: var(--vscode-disabledForeground, rgba(127, 127, 127, 0.12));
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  input[type="number"]:disabled {
+    text-align: center;
+  }
+
   input.invalid {
+    border-color: var(--danger);
+    background-color: var(--danger-bg);
+  }
+
+  select.invalid {
     border-color: var(--danger);
     background-color: var(--danger-bg);
   }
@@ -623,6 +998,34 @@ function getWebviewContent(): string {
   .checkbox-col {
     width: 72px;
     text-align: center;
+  }
+
+  .type-col {
+    min-width: 138px;
+  }
+
+  .short-col {
+    min-width: 96px;
+    width: 96px;
+  }
+
+  .two-digit-col {
+    min-width: 64px;
+    width: 64px;
+  }
+
+  .short-col input[type="number"] {
+    min-width: 72px;
+    padding-left: 8px;
+    padding-right: 8px;
+    text-align: right;
+  }
+
+  .two-digit-col input[type="number"] {
+    min-width: 40px;
+    padding-left: 6px;
+    padding-right: 6px;
+    text-align: right;
   }
 
   .name-col {
@@ -759,7 +1162,7 @@ function getWebviewContent(): string {
   }
 
   @media (max-width: 920px) {
-    .workspace,
+    .lower-workspace,
     .target-grid {
       grid-template-columns: 1fr;
     }
@@ -792,7 +1195,41 @@ function getWebviewContent(): string {
   </div>
 
   <main class="workspace">
-    <div class="stack">
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">Fields</h2>
+          <p class="hint">Define each field permission rule. EDIT automatically enables READ.</p>
+        </div>
+        <button id="addRow" type="button">Add Field</button>
+      </div>
+      <div class="panel-body">
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th class="row-col"></th>
+                <th class="checkbox-col">
+                  <span class="icon-heading" title="Remove field permission from selected targets" aria-label="Remove field permission from selected targets">&#128465;</span>
+                </th>
+                <th class="checkbox-col">CREATE</th>
+                <th class="name-col">Field API Name</th>
+                <th class="name-col">Label</th>
+                <th class="type-col">Type</th>
+                <th class="short-col">Len</th>
+                <th class="two-digit-col">Prec</th>
+                <th class="two-digit-col">Scale</th>
+                <th class="checkbox-col">READ</th>
+                <th class="checkbox-col">EDIT</th>
+              </tr>
+            </thead>
+            <tbody id="field-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <div class="lower-workspace">
       <section class="panel">
         <div class="panel-header">
           <div>
@@ -818,36 +1255,6 @@ function getWebviewContent(): string {
         </div>
       </section>
 
-      <section class="panel">
-        <div class="panel-header">
-          <div>
-            <h2 class="panel-title">Fields</h2>
-            <p class="hint">Define each field permission rule. EDIT automatically enables READ.</p>
-          </div>
-          <button id="addRow" type="button">Add Field</button>
-        </div>
-        <div class="panel-body">
-          <div class="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th class="row-col"></th>
-                  <th class="checkbox-col">
-                    <span class="icon-heading" title="Remove field permission from selected targets" aria-label="Remove field permission from selected targets">&#128465;</span>
-                  </th>
-                  <th class="name-col">Field API Name</th>
-                  <th class="checkbox-col">READ</th>
-                  <th class="checkbox-col">EDIT</th>
-                </tr>
-              </thead>
-              <tbody id="field-rows"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <aside class="stack">
       <section class="panel">
         <div class="panel-header">
           <div>
@@ -895,7 +1302,7 @@ function getWebviewContent(): string {
           </div>
         </div>
       </section>
-    </aside>
+    </div>
   </main>
 </div>
 
@@ -921,8 +1328,59 @@ function getWebviewContent(): string {
   const permsetVisibleBadge = document.getElementById('permsetVisibleBadge');
   const validationMessage = document.getElementById('validationMessage');
 
+  const fieldTypes = [
+    { value: 'Text', label: 'Text' },
+    { value: 'TextArea', label: 'Text Area' },
+    { value: 'LongTextArea', label: 'Text Area Long' },
+    { value: 'Html', label: 'Text Area (Rich)' },
+    { value: 'Number', label: 'Number' },
+    { value: 'Url', label: 'URL' },
+    { value: 'Currency', label: 'Currency' },
+    { value: 'Checkbox', label: 'Checkbox' },
+    { value: 'Email', label: 'Email' },
+    { value: 'Date', label: 'Date' },
+    { value: 'DateTime', label: 'DateTime' },
+    { value: 'Percent', label: 'Percent' },
+    { value: 'Phone', label: 'Phone' }
+  ];
+
   let availableProfiles = [];
   let availablePermissionSets = [];
+  let availableObjects = [];
+  let availableFieldSet = new Set();
+
+  function inferLabelFromField(value) {
+    const parts = (value || '').split('.');
+    const fieldName = parts.length === 2 ? parts[1] : value;
+    return fieldName
+      .replace(/__c$/i, '')
+      .replace(/_/g, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim()
+      .replace(/\\b\\w/g, (char) => char.toUpperCase());
+  }
+
+  function setNumberInput(input, value, fallback) {
+    input.value = String(Number.isFinite(Number(value)) ? Number(value) : fallback);
+  }
+
+  function defaultLengthForType(type) {
+    if (type === 'Text' || type === 'TextArea') {
+      return 255;
+    }
+    if (type === 'LongTextArea' || type === 'Html') {
+      return 32768;
+    }
+    return 255;
+  }
+
+  function usesLength(type) {
+    return type === 'Text' || type === 'TextArea' || type === 'LongTextArea' || type === 'Html';
+  }
+
+  function usesPrecisionScale(type) {
+    return type === 'Number' || type === 'Currency' || type === 'Percent';
+  }
 
   function createFieldRow(entry) {
     const tr = document.createElement('tr');
@@ -952,18 +1410,91 @@ function getWebviewContent(): string {
     deleteFlagCheckbox.type = 'checkbox';
     deleteFlagCheckbox.checked = !!entry.remove;
     deleteFlagCheckbox.title = 'Remove this field permission from selected targets';
+    deleteFlagCheckbox.dataset.fieldControl = 'remove';
     deleteFlagTd.appendChild(deleteFlagCheckbox);
     tr.appendChild(deleteFlagTd);
+
+    const createTd = document.createElement('td');
+    createTd.className = 'checkbox-col';
+    const createCheckbox = document.createElement('input');
+    createCheckbox.type = 'checkbox';
+    createCheckbox.checked = !!entry.create;
+    createCheckbox.title = 'Create this field metadata before applying FLS';
+    createCheckbox.dataset.fieldControl = 'create';
+    createTd.appendChild(createCheckbox);
+    tr.appendChild(createTd);
 
     const fieldTd = document.createElement('td');
     fieldTd.className = 'name-col';
     const fieldInput = document.createElement('input');
     fieldInput.type = 'text';
     fieldInput.value = entry.field || '';
-    fieldInput.placeholder = 'e.g. Account.Name__c';
+    fieldInput.placeholder = 'e.g. Account.My_Field__c';
     fieldInput.spellcheck = false;
+    fieldInput.dataset.fieldControl = 'field';
     fieldTd.appendChild(fieldInput);
     tr.appendChild(fieldTd);
+
+    const labelTd = document.createElement('td');
+    labelTd.className = 'name-col';
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.value = entry.label || '';
+    labelInput.placeholder = 'Field label';
+    labelInput.spellcheck = false;
+    labelInput.dataset.fieldControl = 'label';
+    labelTd.appendChild(labelInput);
+    tr.appendChild(labelTd);
+
+    const typeTd = document.createElement('td');
+    typeTd.className = 'type-col';
+    const typeSelect = document.createElement('select');
+    typeSelect.dataset.fieldControl = 'type';
+    for (const fieldType of fieldTypes) {
+      const option = document.createElement('option');
+      option.value = fieldType.value;
+      option.textContent = fieldType.label;
+      typeSelect.appendChild(option);
+    }
+    typeSelect.value = entry.type || 'Text';
+    typeTd.appendChild(typeSelect);
+    tr.appendChild(typeTd);
+
+    const lengthTd = document.createElement('td');
+    lengthTd.className = 'short-col';
+    const lengthInput = document.createElement('input');
+    lengthInput.type = 'number';
+    lengthInput.min = '1';
+    lengthInput.max = '131072';
+    lengthInput.step = '1';
+    setNumberInput(lengthInput, entry.length, defaultLengthForType(typeSelect.value));
+    lengthInput.dataset.fieldControl = 'length';
+    lengthTd.appendChild(lengthInput);
+    tr.appendChild(lengthTd);
+
+    const precisionTd = document.createElement('td');
+    precisionTd.className = 'two-digit-col';
+    const precisionInput = document.createElement('input');
+    precisionInput.type = 'number';
+    precisionInput.min = '1';
+    precisionInput.max = '18';
+    precisionInput.step = '1';
+    setNumberInput(precisionInput, entry.precision, 18);
+    precisionInput.dataset.fieldControl = 'precision';
+    precisionTd.appendChild(precisionInput);
+    tr.appendChild(precisionTd);
+
+    const scaleTd = document.createElement('td');
+    scaleTd.className = 'two-digit-col';
+    const scaleInput = document.createElement('input');
+    scaleInput.type = 'number';
+    scaleInput.min = '0';
+    scaleInput.max = '17';
+    scaleInput.step = '1';
+    setNumberInput(scaleInput, entry.scale, typeSelect.value === 'Number' ? 0 : 2);
+    scaleInput.dataset.fieldControl = 'scale';
+    scaleTd.appendChild(scaleInput);
+    tr.appendChild(scaleTd);
 
     const readableTd = document.createElement('td');
     readableTd.className = 'checkbox-col';
@@ -971,6 +1502,7 @@ function getWebviewContent(): string {
     readableInput.type = 'checkbox';
     readableInput.checked = !!entry.readable;
     readableInput.title = 'Grant read access';
+    readableInput.dataset.fieldControl = 'readable';
     readableTd.appendChild(readableInput);
     tr.appendChild(readableTd);
 
@@ -980,8 +1512,23 @@ function getWebviewContent(): string {
     editableInput.type = 'checkbox';
     editableInput.checked = !!entry.editable;
     editableInput.title = 'Grant edit access';
+    editableInput.dataset.fieldControl = 'editable';
     editableTd.appendChild(editableInput);
     tr.appendChild(editableTd);
+
+    function syncCreateControls() {
+      const createMode = createCheckbox.checked;
+      const removeMode = deleteFlagCheckbox.checked;
+      labelInput.disabled = !createMode || removeMode;
+      typeSelect.disabled = !createMode || removeMode;
+      lengthInput.disabled = !createMode || removeMode || !usesLength(typeSelect.value);
+      precisionInput.disabled = !createMode || removeMode || !usesPrecisionScale(typeSelect.value);
+      scaleInput.disabled = !createMode || removeMode || !usesPrecisionScale(typeSelect.value);
+      createCheckbox.disabled = removeMode;
+      if (createMode && !labelInput.value.trim()) {
+        labelInput.value = inferLabelFromField(fieldInput.value);
+      }
+    }
 
     editableInput.addEventListener('change', () => {
       if (editableInput.checked) {
@@ -996,10 +1543,42 @@ function getWebviewContent(): string {
       }
       refreshState();
     });
-    deleteFlagCheckbox.addEventListener('change', refreshState);
-    fieldInput.addEventListener('input', refreshState);
+    deleteFlagCheckbox.addEventListener('change', () => {
+      if (deleteFlagCheckbox.checked) {
+        createCheckbox.checked = false;
+      }
+      syncCreateControls();
+      refreshState();
+    });
+    createCheckbox.addEventListener('change', () => {
+      syncCreateControls();
+      refreshState();
+    });
+    fieldInput.addEventListener('input', () => {
+      if (createCheckbox.checked && !labelInput.value.trim()) {
+        labelInput.value = inferLabelFromField(fieldInput.value);
+      }
+      refreshState();
+    });
+    labelInput.addEventListener('input', refreshState);
+    typeSelect.addEventListener('change', () => {
+      if (usesLength(typeSelect.value)) {
+        setNumberInput(lengthInput, defaultLengthForType(typeSelect.value), defaultLengthForType(typeSelect.value));
+      }
+      if (typeSelect.value === 'Number') {
+        setNumberInput(scaleInput, scaleInput.value, 0);
+      } else if (usesPrecisionScale(typeSelect.value)) {
+        setNumberInput(scaleInput, scaleInput.value, 2);
+      }
+      syncCreateControls();
+      refreshState();
+    });
+    lengthInput.addEventListener('input', refreshState);
+    precisionInput.addEventListener('input', refreshState);
+    scaleInput.addEventListener('input', refreshState);
 
     fieldRowsEl.appendChild(tr);
+    syncCreateControls();
     renumberFieldRows();
     refreshState();
   }
@@ -1107,19 +1686,40 @@ function getWebviewContent(): string {
   function collectFieldData() {
     const entries = [];
     for (const tr of Array.from(fieldRowsEl.children)) {
-      const deleteFlag = tr.querySelector('td:nth-child(2) input[type="checkbox"]');
-      const field = tr.querySelector('td:nth-child(3) input[type="text"]');
-      const readable = tr.querySelector('td:nth-child(4) input[type="checkbox"]');
-      const editable = tr.querySelector('td:nth-child(5) input[type="checkbox"]');
+      const deleteFlag = tr.querySelector('[data-field-control="remove"]');
+      const create = tr.querySelector('[data-field-control="create"]');
+      const field = tr.querySelector('[data-field-control="field"]');
+      const label = tr.querySelector('[data-field-control="label"]');
+      const type = tr.querySelector('[data-field-control="type"]');
+      const length = tr.querySelector('[data-field-control="length"]');
+      const precision = tr.querySelector('[data-field-control="precision"]');
+      const scale = tr.querySelector('[data-field-control="scale"]');
+      const readable = tr.querySelector('[data-field-control="readable"]');
+      const editable = tr.querySelector('[data-field-control="editable"]');
       if (!field.value.trim()) {
         continue;
       }
-      entries.push({
+      const entry = {
         field: field.value.trim(),
         readable: !!(readable && readable.checked),
         editable: !!(editable && editable.checked),
         remove: !!(deleteFlag && deleteFlag.checked)
-      });
+      };
+      if (create && create.checked) {
+        entry.create = true;
+        entry.label = label && label.value.trim() ? label.value.trim() : inferLabelFromField(field.value);
+        entry.type = type && type.value ? type.value : 'Text';
+        if (usesLength(entry.type)) {
+          entry.length = Number(
+            length && length.value ? length.value : defaultLengthForType(entry.type)
+          );
+        }
+        if (usesPrecisionScale(entry.type)) {
+          entry.precision = Number(precision && precision.value ? precision.value : 18);
+          entry.scale = Number(scale && scale.value ? scale.value : entry.type === 'Number' ? 0 : 2);
+        }
+      }
+      entries.push(entry);
     }
     return entries;
   }
@@ -1186,13 +1786,61 @@ function getWebviewContent(): string {
     }
   }
 
+  function parseQualifiedFieldName(value) {
+    const parts = (value || '').trim().split('.');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      return null;
+    }
+    return { objectApiName: parts[0], fieldApiName: parts[1] };
+  }
+
+  function isKnownStandardOrSourceField(fieldName) {
+    const parsed = parseQualifiedFieldName(fieldName);
+    if (!parsed) {
+      return false;
+    }
+    if (availableFieldSet.has(fieldName.toLowerCase())) {
+      return true;
+    }
+    return !parsed.fieldApiName.endsWith('__c');
+  }
+
+  function clearRowValidation(tr) {
+    for (const input of Array.from(tr.querySelectorAll('input, select'))) {
+      input.classList.remove('invalid');
+      input.title = input.dataset.originalTitle || input.title || '';
+    }
+  }
+
+  function markInvalid(control, message) {
+    if (!control) {
+      return;
+    }
+    if (!control.dataset.originalTitle) {
+      control.dataset.originalTitle = control.title || '';
+    }
+    control.classList.add('invalid');
+    control.title = message;
+  }
+
   function analyzeFields() {
     const names = new Map();
     let duplicateCount = 0;
+    let invalidCount = 0;
+    let createCount = 0;
+    const availableObjectSet = new Set(availableObjects.map((name) => name.toLowerCase()));
 
-    for (const input of Array.from(fieldRowsEl.querySelectorAll('td:nth-child(3) input[type="text"]'))) {
-      const value = input.value.trim();
-      input.classList.remove('invalid');
+    for (const tr of Array.from(fieldRowsEl.children)) {
+      clearRowValidation(tr);
+      const input = tr.querySelector('[data-field-control="field"]');
+      const create = tr.querySelector('[data-field-control="create"]');
+      const remove = tr.querySelector('[data-field-control="remove"]');
+      const label = tr.querySelector('[data-field-control="label"]');
+      const type = tr.querySelector('[data-field-control="type"]');
+      const length = tr.querySelector('[data-field-control="length"]');
+      const precision = tr.querySelector('[data-field-control="precision"]');
+      const scale = tr.querySelector('[data-field-control="scale"]');
+      const value = input ? input.value.trim() : '';
       if (!value) {
         continue;
       }
@@ -1206,11 +1854,75 @@ function getWebviewContent(): string {
       } else {
         names.set(key, input);
       }
+
+      const parsed = parseQualifiedFieldName(value);
+      if (!parsed) {
+        invalidCount += 1;
+        markInvalid(input, 'Use Object.Field format, including the dot.');
+        continue;
+      }
+
+      const createMode = !!(create && create.checked);
+      const removeMode = !!(remove && remove.checked);
+      if (createMode) {
+        createCount += 1;
+        if (!parsed.fieldApiName.endsWith('__c')) {
+          invalidCount += 1;
+          markInvalid(input, 'Created fields must use a custom API name ending in __c.');
+        }
+        if (!availableObjectSet.has(parsed.objectApiName.toLowerCase())) {
+          invalidCount += 1;
+          markInvalid(input, 'Object was not found in force-app/main/default/objects.');
+        }
+        if (availableFieldSet.has(key)) {
+          invalidCount += 1;
+          markInvalid(input, 'This field already exists in source metadata.');
+        }
+        if (!label || !label.value.trim()) {
+          invalidCount += 1;
+          markInvalid(label, 'Label is required when creating a field.');
+        }
+        if (!type || !type.value) {
+          invalidCount += 1;
+          markInvalid(type, 'Type is required when creating a field.');
+        }
+        if (usesLength(type.value)) {
+          const rawLength = Number(length && length.value);
+          const minLength = type.value === 'LongTextArea' || type.value === 'Html' ? 256 : 1;
+          const maxLength = type.value === 'Text' || type.value === 'TextArea' ? 255 : 131072;
+          if (!Number.isFinite(rawLength) || rawLength < minLength || rawLength > maxLength) {
+            invalidCount += 1;
+            markInvalid(length, 'Length is outside the valid range for this field type.');
+          }
+        }
+        if (usesPrecisionScale(type.value)) {
+          const rawPrecision = Number(precision && precision.value);
+          const rawScale = Number(scale && scale.value);
+          if (!Number.isFinite(rawPrecision) || rawPrecision < 1 || rawPrecision > 18) {
+            invalidCount += 1;
+            markInvalid(precision, 'Precision must be between 1 and 18.');
+          }
+          if (
+            !Number.isFinite(rawScale) ||
+            rawScale < 0 ||
+            rawScale > 17 ||
+            rawScale >= rawPrecision
+          ) {
+            invalidCount += 1;
+            markInvalid(scale, 'Scale must be between 0 and 17 and less than precision.');
+          }
+        }
+      } else if (!removeMode && !isKnownStandardOrSourceField(value)) {
+        invalidCount += 1;
+        markInvalid(input, 'Custom field was not found in source metadata. Check Create to add it.');
+      }
     }
 
     return {
       fieldCount: collectFieldData().length,
-      duplicateCount
+      duplicateCount,
+      invalidCount,
+      createCount
     };
   }
 
@@ -1276,9 +1988,12 @@ function getWebviewContent(): string {
     if (fieldState.duplicateCount > 0) {
       message = 'Duplicate field API names need to be removed.';
       isError = true;
+    } else if (fieldState.invalidCount > 0) {
+      message = 'Fix invalid field names or creation settings before applying.';
+      isError = true;
     } else if (fieldState.fieldCount === 0) {
       message = 'Add at least one field rule.';
-    } else if (targetCount === 0) {
+    } else if (targetCount === 0 && fieldState.createCount === 0) {
       message = 'Select at least one profile or permission set.';
     }
 
@@ -1287,7 +2002,11 @@ function getWebviewContent(): string {
       validationMessage.classList.toggle('error', isError);
     }
     if (runApplyBtn) {
-      runApplyBtn.disabled = fieldState.fieldCount === 0 || targetCount === 0 || fieldState.duplicateCount > 0;
+      runApplyBtn.disabled =
+        fieldState.fieldCount === 0 ||
+        (targetCount === 0 && fieldState.createCount === 0) ||
+        fieldState.duplicateCount > 0 ||
+        fieldState.invalidCount > 0;
     }
   }
 
@@ -1299,6 +2018,12 @@ function getWebviewContent(): string {
     const message = event.data;
     if (message.type === 'load') {
       const data = message.data || {};
+      availableObjects = Array.isArray(data.availableObjects) ? data.availableObjects : [];
+      availableFieldSet = new Set(
+        (Array.isArray(data.availableFields) ? data.availableFields : []).map((name) =>
+          String(name).toLowerCase()
+        )
+      );
       renderFieldRows(data.fields || []);
       renderProfileRows(data.availableProfiles || [], data.selectedProfiles || []);
       renderPermissionSetRows(
