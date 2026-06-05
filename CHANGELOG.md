@@ -1,5 +1,19 @@
 # Change Log
 
+## 1.0.0 - 06/05/2026
+
+- Added optional custom field creation before FLS updates, supporting Text, Text Area, Long Text Area, Rich Text Area, Number, URL, Currency, Checkbox, Email, Date, DateTime, Percent, Phone, and Picklist.
+- Added picklist value entry and metadata generation with restricted value sets.
+- Added field API validation for missing `Object.Field` dots, duplicate rows, existing local fields, unknown local fields, and create-field settings.
+- Expanded local field discovery to include field metadata plus existing profile and permission set FLS entries.
+- Moved the Fields panel to a full-width top row, with Selected Targets and Targets below it in a 40/60 split.
+- Improved field creation controls with clearer disabled states and automatic text length defaults.
+- Added Description and Help Text inputs at the end of new field rows and always emits their metadata tags.
+- Swapped Label before Field API Name and added label-based custom field API name generation.
+- Added an Object selector so generated field API names use `Object.Words_Only__c` format.
+- Changed the saved configuration file from `fls.config.json` to `.fls.config.json`.
+- Preserved unsaved webview state when switching away from and back to the extension tab.
+
 ## 0.2.3 - 05/08/2026
 
 - Refreshed the webview layout with a sticky command bar, summary badges, selected target preview, and clearer field and target panels.
