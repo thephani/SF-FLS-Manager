@@ -1,6 +1,6 @@
 # Change Log
 
-## 1.0.0 - 06/05/2026
+## 2.0.0 - 06/05/2026
 
 - Added optional custom field creation before FLS updates, supporting Text, Text Area, Long Text Area, Rich Text Area, Number, URL, Currency, Checkbox, Email, Date, DateTime, Percent, Phone, and Picklist.
 - Added picklist value entry and metadata generation with restricted value sets.
@@ -13,6 +13,7 @@
 - Added an Object selector so generated field API names use `Object.Words_Only__c` format.
 - Changed the saved configuration file from `fls.config.json` to `.fls.config.json`.
 - Preserved unsaved webview state when switching away from and back to the extension tab.
+- Added a manual GitHub Actions workflow for version bumping, VSIX packaging, artifact upload, and optional Marketplace publishing.
 
 ## 0.2.3 - 05/08/2026
 

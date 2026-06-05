@@ -1,6 +1,7 @@
 .vscode/**
 **/.vscode/**
 .vscode-test/**
+.github/**
 .kilo/**
 .git/**
 .gitignore
