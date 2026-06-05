@@ -195,6 +195,19 @@ You don’t need to touch XML, but here’s what happens under the hood:
 
 Build output is generated in `out/` and should not be committed.
 
+### Release automation
+
+The repository includes a manual GitHub Actions workflow: **Release Extension**.
+
+Use it from the GitHub **Actions** tab when you are ready to package or publish:
+
+- `version` accepts any `npm version` argument, such as `patch`, `minor`, `major`, `prerelease`, or an exact version like `1.0.1`.
+- `publish_marketplace=false` only bumps the version, packages the VSIX, uploads it as a workflow artifact, and pushes the version commit/tag.
+- `publish_marketplace=true` also publishes that VSIX to Visual Studio Marketplace.
+- `prerelease=true` marks the VSIX and Marketplace publish as a pre-release.
+
+Marketplace publishing requires a repository secret named `VSCE_PAT` containing a Visual Studio Marketplace personal access token.
+
 ---
 
 ### Troubleshooting

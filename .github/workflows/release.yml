@@ -1,0 +1,93 @@
+name: Release Extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "npm version argument: patch, minor, major, prerelease, or an exact version like 1.0.1"
+        required: true
+        default: patch
+      publish_marketplace:
+        description: "Publish the packaged VSIX to Visual Studio Marketplace"
+        required: true
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark the VSIX and Marketplace publish as a pre-release"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-extension
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        run: npm version "${{ inputs.version }}" -m "chore(release): %s"
+
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package VSIX
+        run: |
+          args=()
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--pre-release)
+          fi
+          npx --yes @vscode/vsce package \
+            --out "sf-fls-manager-${{ steps.version.outputs.version }}.vsix" \
+            "${args[@]}"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf-fls-manager-${{ steps.version.outputs.version }}
+          path: sf-fls-manager-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
+
+      - name: Push version commit and tag
+        run: git push --follow-tags
+
+      - name: Publish to Visual Studio Marketplace
+        if: ${{ inputs.publish_marketplace }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          args=()
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--pre-release)
+          fi
+          npx --yes @vscode/vsce publish \
+            --packagePath "sf-fls-manager-${{ steps.version.outputs.version }}.vsix" \
+            "${args[@]}"
