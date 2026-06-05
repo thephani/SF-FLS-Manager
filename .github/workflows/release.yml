@@ -124,7 +124,7 @@ jobs:
             "${args[@]}"
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sf-fls-manager-${{ needs.version.outputs.version }}
           path: sf-fls-manager-${{ needs.version.outputs.version }}.vsix
