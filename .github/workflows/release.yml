@@ -26,8 +26,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package dry run
+        run: npx --yes @vscode/vsce package --out dry-run.vsix
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: v${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -59,6 +87,29 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Push version commit and tag
+        run: git push --follow-tags
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    needs: version
+
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Compile
         run: npm run compile
 
@@ -69,21 +120,50 @@ jobs:
             args+=(--pre-release)
           fi
           npx --yes @vscode/vsce package \
-            --out "sf-fls-manager-${{ steps.version.outputs.version }}.vsix" \
+            --out "sf-fls-manager-${{ needs.version.outputs.version }}.vsix" \
             "${args[@]}"
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sf-fls-manager-${{ steps.version.outputs.version }}
-          path: sf-fls-manager-${{ steps.version.outputs.version }}.vsix
+          name: sf-fls-manager-${{ needs.version.outputs.version }}
+          path: sf-fls-manager-${{ needs.version.outputs.version }}.vsix
           if-no-files-found: error
 
-      - name: Push version commit and tag
-        run: git push --follow-tags
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - package
+    if: ${{ inputs.publish_marketplace }}
+
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package VSIX for publish
+        run: |
+          args=()
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--pre-release)
+          fi
+          npx --yes @vscode/vsce package \
+            --out "sf-fls-manager-${{ needs.version.outputs.version }}.vsix" \
+            "${args[@]}"
 
       - name: Publish to Visual Studio Marketplace
-        if: ${{ inputs.publish_marketplace }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
@@ -92,5 +172,5 @@ jobs:
             args+=(--pre-release)
           fi
           npx --yes @vscode/vsce publish \
-            --packagePath "sf-fls-manager-${{ steps.version.outputs.version }}.vsix" \
+            --packagePath "sf-fls-manager-${{ needs.version.outputs.version }}.vsix" \
             "${args[@]}"
