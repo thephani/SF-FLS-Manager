@@ -15,7 +15,8 @@ type SupportedFieldType =
   | 'Date'
   | 'DateTime'
   | 'Percent'
-  | 'Phone';
+  | 'Phone'
+  | 'Picklist';
 
 interface FlsConfigEntry {
   field: string;
@@ -34,6 +35,7 @@ interface FlsConfigEntry {
   precision?: number;
   scale?: number;
   visibleLines?: number;
+  picklistValues?: string[];
 }
 
 interface FlsConfig {
@@ -89,13 +91,14 @@ export function activate(context: vscode.ExtensionContext) {
         'Salesforce FLS Commit Manager',
         vscode.ViewColumn.One,
         {
-          enableScripts: true
+          enableScripts: true,
+          retainContextWhenHidden: true
         }
       );
 
       panel.webview.html = getWebviewContent();
 
-      const configUri = vscode.Uri.joinPath(workspaceFolder.uri, 'fls.config.json');
+      const configUri = vscode.Uri.joinPath(workspaceFolder.uri, '.fls.config.json');
 
       // When webview is ready, send existing config if any.
       panel.webview.onDidReceiveMessage(
@@ -168,10 +171,10 @@ export function activate(context: vscode.ExtensionContext) {
               };
               const json = JSON.stringify(toSave, null, 2);
               await vscode.workspace.fs.writeFile(configUri, Buffer.from(json, 'utf8'));
-              vscode.window.showInformationMessage('SF-FLS-MANAGER: fls.config.json saved.');
+              vscode.window.showInformationMessage('SF-FLS-MANAGER: .fls.config.json saved.');
             } catch (error: any) {
               vscode.window.showErrorMessage(
-                `SF-FLS-MANAGER: Failed to save fls.config.json - ${error?.message ?? String(
+                `SF-FLS-MANAGER: Failed to save .fls.config.json - ${error?.message ?? String(
                   error
                 )}`
               );
@@ -205,7 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
               await vscode.workspace.fs.writeFile(configUri, Buffer.from(json, 'utf8'));
             } catch (error: any) {
               vscode.window.showErrorMessage(
-                `SF-FLS-MANAGER: Failed to save fls.config.json before apply - ${
+                `SF-FLS-MANAGER: Failed to save .fls.config.json before apply - ${
                   error?.message ?? String(error)
                 }`
               );
@@ -258,9 +261,22 @@ async function buildObjectFieldIndex(
     workspaceFolder,
     '**/force-app/main/default/objects/**/fields/**/*.field-meta.xml'
   );
+  const profileFiles = await findWorkspaceFiles(
+    workspaceFolder,
+    '**/force-app/main/default/profiles/**/*.profile-meta.xml'
+  );
+  const permsetFiles = await findWorkspaceFiles(
+    workspaceFolder,
+    '**/force-app/main/default/permissionsets/**/*.permissionset-meta.xml'
+  );
 
   const objects = new Set<string>();
   const fields = new Set<string>();
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    allowBooleanAttributes: true
+  });
 
   for (const uri of objectFiles) {
     const objectName = objectNameFromObjectFileUri(uri);
@@ -277,10 +293,38 @@ async function buildObjectFieldIndex(
     }
   }
 
+  for (const uri of profileFiles.concat(permsetFiles)) {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const parsedXml = parser.parse(Buffer.from(bytes).toString('utf8'));
+      for (const fieldName of extractFieldPermissions(parsedXml)) {
+        const parsed = parseQualifiedFieldName(fieldName);
+        if (parsed) {
+          objects.add(parsed.objectApiName);
+          fields.add(`${parsed.objectApiName}.${parsed.fieldApiName}`);
+        }
+      }
+    } catch {
+      // Ignore malformed target metadata for indexing; apply will report file-specific errors.
+    }
+  }
+
   return {
     objects: uniqueSortedNames(Array.from(objects)),
     fields: uniqueSortedNames(Array.from(fields))
   };
+}
+
+function extractFieldPermissions(parsedXml: any): string[] {
+  const root = parsedXml.Profile ?? parsedXml.PermissionSet ?? parsedXml;
+  let fieldPermissions = root?.fieldPermissions ?? [];
+  if (!Array.isArray(fieldPermissions)) {
+    fieldPermissions = [fieldPermissions];
+  }
+  return fieldPermissions
+    .map((permission: any) => permission?.field)
+    .filter((field: unknown): field is string => typeof field === 'string' && !!field.trim())
+    .map((field: string) => field.trim());
 }
 
 function objectNameFromObjectFileUri(uri: vscode.Uri): string | undefined {
@@ -332,6 +376,22 @@ async function applyFlsToProfiles(
   if (invalidField) {
     vscode.window.showWarningMessage(
       `SF-FLS-MANAGER: Field "${invalidField.field}" must use Object.Field format.`
+    );
+    return;
+  }
+
+  const objectIndex = await buildObjectFieldIndex(workspaceFolder);
+  const availableFields = new Set(objectIndex.fields.map((name) => name.toLowerCase()));
+  const unknownField = fieldsConfig.find(
+    (entry) =>
+      entry.field &&
+      !entry.create &&
+      !entry.remove &&
+      !isKnownLocalField(entry.field, availableFields)
+  );
+  if (unknownField) {
+    vscode.window.showWarningMessage(
+      `SF-FLS-MANAGER: Field "${unknownField.field}" was not found in local field metadata or existing FLS entries. Check Create if this is a new custom field.`
     );
     return;
   }
@@ -556,6 +616,10 @@ function parseQualifiedFieldName(value: string): ParsedFieldName | undefined {
   };
 }
 
+function isKnownLocalField(fieldName: string, availableFields: Set<string>): boolean {
+  return !!parseQualifiedFieldName(fieldName) && availableFields.has(fieldName.toLowerCase());
+}
+
 function normalizeFieldType(value: unknown): SupportedFieldType | undefined {
   const allowed: SupportedFieldType[] = [
     'Text',
@@ -570,7 +634,8 @@ function normalizeFieldType(value: unknown): SupportedFieldType | undefined {
     'Date',
     'DateTime',
     'Percent',
-    'Phone'
+    'Phone',
+    'Picklist'
   ];
   return allowed.find((type) => type === value);
 }
@@ -665,19 +730,69 @@ function buildCustomFieldMetadata(
       elements.push(['required', false]);
       elements.push(['type', type]);
       break;
+    case 'Picklist':
+      elements.push(['required', false]);
+      elements.push(['type', 'Picklist']);
+      break;
   }
 
   const body = elements
     .map(([name, value]) => `    <${name}>${escapeXml(String(value))}</${name}>`)
     .join('\n');
+  const valueSetBody =
+    type === 'Picklist' ? `\n${buildPicklistValueSetMetadata(entry.picklistValues)}` : '';
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">',
-    body,
+    body + valueSetBody,
     '</CustomField>',
     ''
   ].join('\n');
+}
+
+function buildPicklistValueSetMetadata(values: unknown): string {
+  const picklistValues = normalizePicklistValues(values);
+  const customValues = picklistValues
+    .map(
+      (value, index) =>
+        [
+          '        <value>',
+          `            <fullName>${escapeXml(value)}</fullName>`,
+          `            <default>${index === 0 ? 'true' : 'false'}</default>`,
+          `            <label>${escapeXml(value)}</label>`,
+          '        </value>'
+        ].join('\n')
+    )
+    .join('\n');
+
+  return [
+    '    <valueSet>',
+    '        <restricted>true</restricted>',
+    '        <valueSetDefinition>',
+    '            <sorted>false</sorted>',
+    customValues,
+    '        </valueSetDefinition>',
+    '    </valueSet>'
+  ].join('\n');
+}
+
+function normalizePicklistValues(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return ['Option 1'];
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (!text || seen.has(text.toLowerCase())) {
+      continue;
+    }
+    seen.add(text.toLowerCase());
+    normalized.push(text);
+  }
+  return normalized.length ? normalized : ['Option 1'];
 }
 
 function clampInteger(
@@ -922,7 +1037,8 @@ function getWebviewContent(): string {
   input[type="text"],
   input[type="number"],
   input[type="search"],
-  select {
+  select,
+  textarea {
     width: 100%;
     background-color: var(--vscode-input-background, var(--bg-elevated));
     border: 1px solid var(--vscode-input-border, var(--border-subtle));
@@ -935,13 +1051,15 @@ function getWebviewContent(): string {
   input[type="text"]:focus,
   input[type="number"]:focus,
   input[type="search"]:focus,
-  select:focus {
+  select:focus,
+  textarea:focus {
     outline: 1px solid var(--border-strong);
     outline-offset: -1px;
   }
 
   input:disabled,
-  select:disabled {
+  select:disabled,
+  textarea:disabled {
     background-color: var(--vscode-disabledForeground, rgba(127, 127, 127, 0.12));
     border-color: var(--border-subtle);
     color: var(--text-muted);
@@ -959,6 +1077,11 @@ function getWebviewContent(): string {
   }
 
   select.invalid {
+    border-color: var(--danger);
+    background-color: var(--danger-bg);
+  }
+
+  textarea.invalid {
     border-color: var(--danger);
     background-color: var(--danger-bg);
   }
@@ -1034,6 +1157,15 @@ function getWebviewContent(): string {
 
   .name-col {
     min-width: 220px;
+  }
+
+  .values-col {
+    min-width: 220px;
+  }
+
+  .values-col textarea {
+    min-height: 28px;
+    resize: vertical;
   }
 
   .row-col {
@@ -1224,6 +1356,7 @@ function getWebviewContent(): string {
                 <th class="short-col">Len</th>
                 <th class="two-digit-col">Prec</th>
                 <th class="two-digit-col">Scale</th>
+                <th class="values-col">Picklist Values</th>
                 <th class="checkbox-col">READ</th>
                 <th class="checkbox-col">EDIT</th>
                 <th class="name-col">Description</th>
@@ -1335,6 +1468,8 @@ function getWebviewContent(): string {
   const permsetVisibleBadge = document.getElementById('permsetVisibleBadge');
   const validationMessage = document.getElementById('validationMessage');
 
+  const restoredClientState = vscode.getState() || null;
+
   const fieldTypes = [
     { value: 'Text', label: 'Text' },
     { value: 'TextArea', label: 'Text Area' },
@@ -1348,7 +1483,8 @@ function getWebviewContent(): string {
     { value: 'Date', label: 'Date' },
     { value: 'DateTime', label: 'DateTime' },
     { value: 'Percent', label: 'Percent' },
-    { value: 'Phone', label: 'Phone' }
+    { value: 'Phone', label: 'Phone' },
+    { value: 'Picklist', label: 'Picklist' }
   ];
 
   let availableProfiles = [];
@@ -1412,6 +1548,32 @@ function getWebviewContent(): string {
 
   function usesPrecisionScale(type) {
     return type === 'Number' || type === 'Currency' || type === 'Percent';
+  }
+
+  function usesPicklistValues(type) {
+    return type === 'Picklist';
+  }
+
+  function parsePicklistValues(value) {
+    const seen = new Set();
+    const values = [];
+    for (const part of String(value || '').split(/[\\n,;]+/)) {
+      const text = part.trim();
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      values.push(text);
+    }
+    return values;
+  }
+
+  function picklistValuesToText(values) {
+    if (!Array.isArray(values)) {
+      return '';
+    }
+    return values.map((value) => String(value || '').trim()).filter(Boolean).join('\\n');
   }
 
   function createFieldRow(entry) {
@@ -1548,6 +1710,17 @@ function getWebviewContent(): string {
     scaleTd.appendChild(scaleInput);
     tr.appendChild(scaleTd);
 
+    const picklistValuesTd = document.createElement('td');
+    picklistValuesTd.className = 'values-col';
+    const picklistValuesInput = document.createElement('textarea');
+    picklistValuesInput.value = picklistValuesToText(entry.picklistValues);
+    picklistValuesInput.placeholder = 'One value per line';
+    picklistValuesInput.spellcheck = false;
+    picklistValuesInput.rows = 1;
+    picklistValuesInput.dataset.fieldControl = 'picklistValues';
+    picklistValuesTd.appendChild(picklistValuesInput);
+    tr.appendChild(picklistValuesTd);
+
     const readableTd = document.createElement('td');
     readableTd.className = 'checkbox-col';
     const readableInput = document.createElement('input');
@@ -1601,6 +1774,7 @@ function getWebviewContent(): string {
       lengthInput.disabled = !createMode || removeMode || !usesLength(typeSelect.value);
       precisionInput.disabled = !createMode || removeMode || !usesPrecisionScale(typeSelect.value);
       scaleInput.disabled = !createMode || removeMode || !usesPrecisionScale(typeSelect.value);
+      picklistValuesInput.disabled = !createMode || removeMode || !usesPicklistValues(typeSelect.value);
       createCheckbox.disabled = removeMode;
       if (createMode && !labelInput.value.trim()) {
         labelInput.value = inferLabelFromField(fieldInput.value);
@@ -1685,6 +1859,7 @@ function getWebviewContent(): string {
     lengthInput.addEventListener('input', refreshState);
     precisionInput.addEventListener('input', refreshState);
     scaleInput.addEventListener('input', refreshState);
+    picklistValuesInput.addEventListener('input', refreshState);
 
     fieldRowsEl.appendChild(tr);
     syncCreateControls();
@@ -1805,6 +1980,7 @@ function getWebviewContent(): string {
       const length = tr.querySelector('[data-field-control="length"]');
       const precision = tr.querySelector('[data-field-control="precision"]');
       const scale = tr.querySelector('[data-field-control="scale"]');
+      const picklistValues = tr.querySelector('[data-field-control="picklistValues"]');
       const readable = tr.querySelector('[data-field-control="readable"]');
       const editable = tr.querySelector('[data-field-control="editable"]');
       if (!field.value.trim()) {
@@ -1830,6 +2006,9 @@ function getWebviewContent(): string {
         if (usesPrecisionScale(entry.type)) {
           entry.precision = Number(precision && precision.value ? precision.value : 18);
           entry.scale = Number(scale && scale.value ? scale.value : entry.type === 'Number' ? 0 : 2);
+        }
+        if (usesPicklistValues(entry.type)) {
+          entry.picklistValues = parsePicklistValues(picklistValues ? picklistValues.value : '');
         }
       }
       entries.push(entry);
@@ -1859,6 +2038,15 @@ function getWebviewContent(): string {
       }
     }
     return selected;
+  }
+
+  function persistClientState(fields, selectedProfiles, selectedPermissionSets) {
+    vscode.setState({
+      fields,
+      selectedProfiles,
+      selectedPermissionSets,
+      searchTerm: searchInput ? searchInput.value || '' : ''
+    });
   }
 
   function renderPreviewLists(profiles, permsets) {
@@ -1907,15 +2095,8 @@ function getWebviewContent(): string {
     return { objectApiName: parts[0], fieldApiName: parts[1] };
   }
 
-  function isKnownStandardOrSourceField(fieldName) {
-    const parsed = parseQualifiedFieldName(fieldName);
-    if (!parsed) {
-      return false;
-    }
-    if (availableFieldSet.has(fieldName.toLowerCase())) {
-      return true;
-    }
-    return !parsed.fieldApiName.endsWith('__c');
+  function isKnownLocalField(fieldName) {
+    return !!parseQualifiedFieldName(fieldName) && availableFieldSet.has(fieldName.toLowerCase());
   }
 
   function clearRowValidation(tr) {
@@ -1954,6 +2135,7 @@ function getWebviewContent(): string {
       const length = tr.querySelector('[data-field-control="length"]');
       const precision = tr.querySelector('[data-field-control="precision"]');
       const scale = tr.querySelector('[data-field-control="scale"]');
+      const picklistValues = tr.querySelector('[data-field-control="picklistValues"]');
       const value = input ? input.value.trim() : '';
       if (!value) {
         continue;
@@ -2030,9 +2212,16 @@ function getWebviewContent(): string {
             markInvalid(scale, 'Scale must be between 0 and 17 and less than precision.');
           }
         }
-      } else if (!removeMode && !isKnownStandardOrSourceField(value)) {
+        if (usesPicklistValues(type.value)) {
+          const values = parsePicklistValues(picklistValues ? picklistValues.value : '');
+          if (!values.length) {
+            invalidCount += 1;
+            markInvalid(picklistValues, 'At least one picklist value is required.');
+          }
+        }
+      } else if (!removeMode && !isKnownLocalField(value)) {
         invalidCount += 1;
-        markInvalid(input, 'Custom field was not found in source metadata. Check Create to add it.');
+        markInvalid(input, 'Field was not found in local field metadata or existing FLS entries.');
       }
     }
 
@@ -2072,6 +2261,7 @@ function getWebviewContent(): string {
     const targetCount = profiles.length + permsets.length;
     const operationCount = fieldState.fieldCount * targetCount;
 
+    persistClientState(collectFieldData(), profiles, permsets);
     renderPreviewLists(profiles, permsets);
 
     if (fieldCountBadge) {
@@ -2136,18 +2326,29 @@ function getWebviewContent(): string {
     const message = event.data;
     if (message.type === 'load') {
       const data = message.data || {};
+      const clientState = restoredClientState || {};
       availableObjects = Array.isArray(data.availableObjects) ? data.availableObjects : [];
       availableFieldSet = new Set(
         (Array.isArray(data.availableFields) ? data.availableFields : []).map((name) =>
           String(name).toLowerCase()
         )
       );
-      renderFieldRows(data.fields || []);
-      renderProfileRows(data.availableProfiles || [], data.selectedProfiles || []);
+      renderFieldRows(Array.isArray(clientState.fields) ? clientState.fields : data.fields || []);
+      renderProfileRows(
+        data.availableProfiles || [],
+        Array.isArray(clientState.selectedProfiles)
+          ? clientState.selectedProfiles
+          : data.selectedProfiles || []
+      );
       renderPermissionSetRows(
         data.availablePermissionSets || [],
-        data.selectedPermissionSets || []
+        Array.isArray(clientState.selectedPermissionSets)
+          ? clientState.selectedPermissionSets
+          : data.selectedPermissionSets || []
       );
+      if (searchInput && typeof clientState.searchTerm === 'string') {
+        searchInput.value = clientState.searchTerm;
+      }
       applySearchFilter(searchInput ? searchInput.value || '' : '');
       refreshState();
     }
